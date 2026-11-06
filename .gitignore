@@ -1,0 +1,19 @@
+# build output
+build/
+dist/
+*.spec
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# local data
+*.log
+
+# os
+Thumbs.db
+desktop.ini
+.DS_Store
