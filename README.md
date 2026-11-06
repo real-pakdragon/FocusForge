@@ -44,26 +44,54 @@
 
 ## Install
 
-### From the prebuilt executable
+### Installer (recommended)
 
-1. Download `FocusForge.exe` from the releases page (or build it yourself, below).
-2. Run it. No installer, no dependencies — it is a single self-contained file.
+1. Copy `FocusForge-Setup-1.0.0.exe` to any Windows 10/11 PC.
+2. Double-click it and follow the wizard.
+
+The installer is **per-user and needs no administrator rights**. It installs to
+`%LOCALAPPDATA%\Programs\FocusForge`, adds a Desktop and Start Menu shortcut, creates a
+real uninstaller and registers FocusForge in **Settings → Apps**. If an older copy is
+running it is closed automatically before the files are replaced.
+
+You can also run it unattended:
+
+```powershell
+.\FocusForge-Setup-1.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+```
+
+### Portable executable
+
+Prefer no installation? Run `FocusForge.exe` directly — it is a single self-contained
+file with no dependencies and stores its data in `%APPDATA%\FocusForge`.
 
 ### Build from source
 
-Requires [Python 3.10+](https://www.python.org/) on Windows.
+Requires [Python 3.10+](https://www.python.org/) on Windows, plus
+[Inno Setup 6](https://jrsoftware.org/isinfo.php) for the installer step.
 
 ```powershell
 git clone https://github.com/<your-user>/FocusForge.git
 cd FocusForge
 
 python -m pip install pillow pyinstaller
+winget install --id JRSoftware.InnoSetup --scope user
 
-# build dist\FocusForge.exe
+# test, build dist\FocusForge.exe and release\FocusForge-Setup-1.0.0.exe
 powershell -ExecutionPolicy Bypass -File .\build.ps1
+```
 
-# install to %LOCALAPPDATA%\Programs\FocusForge,
-# add Desktop + Start Menu shortcuts and launch it
+`build.ps1` skips the installer when Inno Setup is not installed, so the portable
+`.exe` always builds. To compile only the installer, run:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss
+```
+
+The older script-based installer is still available for portable setups:
+
+```powershell
+# installs dist\FocusForge.exe per-user with shortcuts
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
@@ -99,24 +127,36 @@ Deleting the file simply starts you from zero.
 
 ## Uninstall
 
-Use **Settings → Apps → FocusForge → Uninstall**, or run:
+Use **Settings → Apps → FocusForge → Uninstall**, or run the uninstaller directly:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\FocusForge\Uninstall.ps1"
+& "$env:LOCALAPPDATA\Programs\FocusForge\unins000.exe"
 ```
 
-That removes the app, the shortcuts, the registry entry and your local stats.
+That removes the app, the shortcuts and the registry entry. Your stats in
+`%APPDATA%\FocusForge` are deliberately left untouched, so reinstalling keeps your
+history — delete that folder by hand if you want a clean slate.
 
 ## Project layout
 
 ```
 FocusForge/
-├── src/app.py              # the whole application (tkinter + Pillow)
-├── assets/                 # icon, logo, Windows version resource
-├── tools/make_icon.py      # regenerates assets/icon.ico + logo.png
-├── tests/smoke_test.py     # UI + state machine smoke test
-├── build.ps1               # test + package into one .exe
-└── install.ps1             # per-user install + shortcuts
+├── src/app.py                 # the whole application (tkinter + Pillow)
+├── assets/                    # icon, logo, version resource, wizard artwork
+├── installer.iss              # Inno Setup script -> release\FocusForge-Setup-*.exe
+├── tools/make_icon.py         # regenerates assets/icon.ico + logo.png
+├── tools/make_installer_art.py# regenerates the installer wizard bitmaps
+├── tests/smoke_test.py        # UI + state machine smoke test
+├── build.ps1                  # test + package .exe + compile the installer
+├── install.ps1                # script based per-user install (portable builds)
+└── publish.ps1                # create the GitHub repo and push
+```
+
+Build outputs:
+
+```
+dist\FocusForge.exe                 portable single file (~30 MB)
+release\FocusForge-Setup-1.0.0.exe  installer for any Windows PC (~32 MB)
 ```
 
 ## Tech notes
