@@ -992,17 +992,24 @@ class FocusForge:
         cx, cy = w / 2.0, h / 2.0
         r = size / 2.0
 
+        # keep the ring typography proportional when focus mode grows the ring
+        k = max(0.72, min(2.9, size / float(self._px(420))))
+        f_goal = ("Segoe UI Semibold", -max(7, int(self._px(10) * k)))
+        f_small = ("Segoe UI Semibold", -max(7, int(self._px(9) * k)))
+        f_time = ("Cascadia Mono SemiBold", -max(18, int(self._px(44) * k)))
+        f_sub = ("Segoe UI", -max(8, int(self._px(11) * k)))
+
         self._ring_img_item = cv.create_image(cx, cy, anchor="center", tags="ring")
         cv.tag_lower("ring")
 
         self._ring_goal_item = cv.create_text(
-            cx, cy - r * 0.44, text="", fill=DIM, font=self.f_goal, tags="ringtext")
+            cx, cy - r * 0.44, text="", fill=DIM, font=f_goal, tags="ringtext")
         self._ring_status_item = cv.create_text(
-            cx, cy - r * 0.19, text="", fill=MUTED, font=self.f_small, tags="ringtext")
+            cx, cy - r * 0.19, text="", fill=MUTED, font=f_small, tags="ringtext")
         self._ring_time_item = cv.create_text(
-            cx, cy + r * 0.05, text="00:00:00", fill=TEXT, font=self.f_time, tags="ringtext")
+            cx, cy + r * 0.05, text="00:00:00", fill=TEXT, font=f_time, tags="ringtext")
         self._ring_sub_item = cv.create_text(
-            cx, cy + r * 0.31, text="", fill=MUTED, font=self.f_sub, tags="ringtext")
+            cx, cy + r * 0.31, text="", fill=MUTED, font=f_sub, tags="ringtext")
 
     def _render_ring(self, force: bool = False):
         if self._ring_img_item is None or self._ring_size <= 0:
