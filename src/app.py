@@ -1,9 +1,9 @@
-"""FocusForge - a deep work / study challenge timer for Windows.
+"""FocusForge - a deep work / study challenge timer for Windows, macOS and Linux.
 
 A single-file tkinter application with a custom rendered UI:
   * circular progress ring with gradient + glow
   * pause / resume, reset, +5 min, custom durations (25m .. 24h)
-  * live stats (today, streak, sessions), persisted to %APPDATA%
+  * live stats (today, streak, sessions), persisted to the per-user data dir
   * always-on-top and keep-awake toggles
   * fullscreen focus mode, keyboard shortcuts, completion confetti + chime
 """
@@ -15,11 +15,16 @@ import json
 import math
 import os
 import random
+import shutil
+import signal
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
+import wave
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -32,8 +37,45 @@ except Exception:  # pragma: no cover - non Windows
 
 APP_NAME = "FocusForge"
 VERSION = "1.0.0"
-DATA_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
+
+IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
+
+
+def _default_data_dir() -> Path:
+    """Return the per-user data directory for the current OS.
+
+    ``FOCUSFORGE_DATA_DIR`` overrides the location (used by the tests and by
+    people who want a portable install).
+    """
+    override = os.environ.get("FOCUSFORGE_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+    if IS_WINDOWS:
+        base = Path(os.environ.get("APPDATA", str(Path.home())))
+    elif IS_MACOS:
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+    return base / APP_NAME
+
+
+DATA_DIR = _default_data_dir()
 DATA_FILE = DATA_DIR / "stats.json"
+
+# Font families differ per platform; Tk silently falls back if one is missing.
+if IS_WINDOWS:
+    UI_FONT = "Segoe UI"
+    UI_FONT_SEMIBOLD = "Segoe UI Semibold"
+    MONO_FONT = "Cascadia Mono SemiBold"
+elif IS_MACOS:
+    UI_FONT = "Helvetica Neue"
+    UI_FONT_SEMIBOLD = "Helvetica Neue"
+    MONO_FONT = "Menlo"
+else:
+    UI_FONT = "DejaVu Sans"
+    UI_FONT_SEMIBOLD = "DejaVu Sans"
+    MONO_FONT = "DejaVu Sans Mono"
 
 # ---------------------------------------------------------------- palette ---
 BG = "#090D13"
@@ -299,21 +341,33 @@ def make_logo(size: int) -> Image.Image:
     return img.resize((size, size), Image.LANCZOS)
 
 
-def flash_taskbar(hwnd: int) -> None:
-    if sys.platform != "win32" or not hwnd:
-        return
+def flash_taskbar(root: tk.Misc | None = None) -> None:
+    """Get the user's attention when a challenge finishes (per platform)."""
     try:
-        class FLASHWINFO(ctypes.Structure):
-            _fields_ = [
-                ("cbSize", ctypes.c_uint),
-                ("hwnd", ctypes.c_void_p),
-                ("dwFlags", ctypes.c_uint),
-                ("uCount", ctypes.c_uint),
-                ("dwTimeout", ctypes.c_uint),
-            ]
+        if IS_WINDOWS:
+            hwnd = None
+            if root is not None:
+                hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+            hwnd = hwnd or ctypes.windll.user32.GetForegroundWindow()
 
-        info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd, 0x00000003 | 0x0000000C, 6, 0)
-        ctypes.windll.user32.FlashWindowEx(ctypes.byref(info))
+            class FLASHWINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", ctypes.c_uint),
+                    ("hwnd", ctypes.c_void_p),
+                    ("dwFlags", ctypes.c_uint),
+                    ("uCount", ctypes.c_uint),
+                    ("dwTimeout", ctypes.c_uint),
+                ]
+
+            info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd, 0x00000003 | 0x0000000C, 6, 0)
+            ctypes.windll.user32.FlashWindowEx(ctypes.byref(info))
+        elif IS_MACOS and shutil.which("osascript"):
+            subprocess.Popen(
+                ["osascript", "-e",
+                 'display notification "Challenge complete" with title "FocusForge"'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
     except Exception:
         pass
 
@@ -335,17 +389,131 @@ def set_dark_title_bar(root: tk.Tk) -> None:
         pass
 
 
-def keep_awake(enabled: bool) -> None:
-    if sys.platform != "win32":
+_AWAKE_PROC: subprocess.Popen | None = None
+_AWAKE_LOCK = threading.Lock()
+
+
+def _stop_awake_proc() -> None:
+    global _AWAKE_PROC
+    if _AWAKE_PROC is None:
         return
-    ES_CONTINUOUS = 0x80000000
-    ES_SYSTEM_REQUIRED = 0x00000001
-    ES_DISPLAY_REQUIRED = 0x00000002
     try:
-        flags = ES_CONTINUOUS | (ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED if enabled else 0)
-        ctypes.windll.kernel32.SetThreadExecutionState(flags)
+        if os.name == "posix":
+            os.killpg(os.getpgid(_AWAKE_PROC.pid), signal.SIGTERM)
+        else:
+            _AWAKE_PROC.terminate()
     except Exception:
-        pass
+        try:
+            _AWAKE_PROC.terminate()
+        except Exception:
+            pass
+    _AWAKE_PROC = None
+
+
+def keep_awake(enabled: bool) -> None:
+    """Stop the OS from sleeping/blanking the screen while a timer runs."""
+    if IS_WINDOWS:
+        ES_CONTINUOUS = 0x80000000
+        ES_SYSTEM_REQUIRED = 0x00000001
+        ES_DISPLAY_REQUIRED = 0x00000002
+        try:
+            flags = ES_CONTINUOUS | (ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED if enabled else 0)
+            ctypes.windll.kernel32.SetThreadExecutionState(flags)
+        except Exception:
+            pass
+        return
+
+    global _AWAKE_PROC
+    with _AWAKE_LOCK:
+        if enabled:
+            if _AWAKE_PROC is not None and _AWAKE_PROC.poll() is None:
+                return
+            argv = None
+            if IS_MACOS and shutil.which("caffeinate"):
+                argv = ["caffeinate", "-dimsu"]
+            elif shutil.which("systemd-inhibit"):
+                argv = [
+                    "systemd-inhibit",
+                    "--what=idle:sleep",
+                    "--who=FocusForge",
+                    "--why=Focus timer running",
+                    "sleep", "infinity",
+                ]
+            if not argv:
+                return
+            try:
+                _AWAKE_PROC = subprocess.Popen(
+                    argv,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except Exception:
+                _AWAKE_PROC = None
+        else:
+            _stop_awake_proc()
+
+
+def _write_tone_wav(path: str, notes, rate: int = 44100) -> None:
+    """Render a short sequence of (frequency, duration_ms) sine tones to a WAV."""
+    frames = bytearray()
+    for freq, dur_ms in notes:
+        count = max(1, int(rate * dur_ms / 1000.0))
+        fade = max(1, int(rate * 0.006))
+        for i in range(count):
+            env = min(1.0, i / fade, (count - i) / fade)
+            sample = int(0.30 * 32767 * env * math.sin(2 * math.pi * freq * i / rate))
+            frames += sample.to_bytes(2, "little", signed=True)
+    with wave.open(path, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes(bytes(frames))
+
+
+def play_tones(notes) -> None:
+    """Play milestone/completion chimes on Windows, macOS and Linux."""
+    if not notes:
+        return
+
+    def run():
+        if IS_WINDOWS:
+            if not winsound:
+                return
+            for freq, dur in notes:
+                try:
+                    winsound.Beep(int(freq), int(dur))
+                except Exception:
+                    pass
+            return
+
+        path = None
+        try:
+            fd, path = tempfile.mkstemp(prefix="focusforge-", suffix=".wav")
+            os.close(fd)
+            _write_tone_wav(path, notes)
+            if IS_MACOS and shutil.which("afplay"):
+                subprocess.run(["afplay", path], check=False, timeout=15)
+                return
+            players = (
+                ["paplay"], ["aplay", "-q"],
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],
+            )
+            for player in players:
+                if shutil.which(player[0]):
+                    subprocess.run(player + [path], check=False, timeout=15)
+                    return
+        except Exception:
+            pass
+        finally:
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 # ---------------------------------------------------------------- widgets ---
@@ -363,7 +531,7 @@ class Pill(tk.Canvas):
     }
 
     def __init__(self, master, text, command=None, w=100, h=38, radius=12,
-                 style="ghost", font=("Segoe UI Semibold", -12), bg=None):
+                 style="ghost", font=(UI_FONT_SEMIBOLD, -12), bg=None):
         self._parent_bg = bg or master.cget("bg")
         super().__init__(master, width=w, height=h, bg=self._parent_bg,
                          highlightthickness=0, bd=0, cursor="hand2")
@@ -468,30 +636,30 @@ class DurationDialog(tk.Toplevel):
         wrap.pack(fill="both", expand=True)
 
         tk.Label(wrap, text="CUSTOM DURATION", bg=BG, fg=TEXT,
-                 font=("Segoe UI Semibold", -int(14 * s))).pack(anchor="w")
+                 font=(UI_FONT_SEMIBOLD, -int(14 * s))).pack(anchor="w")
         tk.Label(wrap, text="How long is this challenge?", bg=BG, fg=MUTED,
-                 font=("Segoe UI", -int(11 * s))).pack(anchor="w", pady=(2, int(16 * s)))
+                 font=(UI_FONT, -int(11 * s))).pack(anchor="w", pady=(2, int(16 * s)))
 
         row = tk.Frame(wrap, bg=BG)
         row.pack()
         self.hours = self._field(row, "HOURS", initial_minutes // 60, s)
         tk.Label(row, text=":", bg=BG, fg=DIM,
-                 font=("Segoe UI Semibold", -int(22 * s))).pack(side="left", padx=int(8 * s), pady=(int(14 * s), 0))
+                 font=(UI_FONT_SEMIBOLD, -int(22 * s))).pack(side="left", padx=int(8 * s), pady=(int(14 * s), 0))
         self.minutes = self._field(row, "MINUTES", initial_minutes % 60, s)
 
         self.preview = tk.Label(wrap, text="", bg=BG, fg=ACCENT,
-                                font=("Cascadia Mono SemiBold", -int(15 * s)))
+                                font=(MONO_FONT, -int(15 * s)))
         self.preview.pack(pady=(int(14 * s), int(4 * s)))
         self.error = tk.Label(wrap, text="", bg=BG, fg=ROSE,
-                              font=("Segoe UI", -int(10 * s)))
+                              font=(UI_FONT, -int(10 * s)))
         self.error.pack()
 
         btns = tk.Frame(wrap, bg=BG)
         btns.pack(pady=(int(14 * s), 0))
         Pill(btns, "CANCEL", command=self.destroy, w=int(104 * s), h=int(40 * s),
-             radius=int(11 * s), style="ghost", font=("Segoe UI Semibold", -int(11 * s)), bg=BG).pack(side="left", padx=(0, int(10 * s)))
+             radius=int(11 * s), style="ghost", font=(UI_FONT_SEMIBOLD, -int(11 * s)), bg=BG).pack(side="left", padx=(0, int(10 * s)))
         Pill(btns, "SET TIMER", command=self._ok, w=int(126 * s), h=int(40 * s),
-             radius=int(11 * s), style="primary", font=("Segoe UI Semibold", -int(11 * s)), bg=BG).pack(side="left")
+             radius=int(11 * s), style="primary", font=(UI_FONT_SEMIBOLD, -int(11 * s)), bg=BG).pack(side="left")
 
         for e in (self.hours, self.minutes):
             e.bind("<KeyRelease>", lambda _e: self._update_preview())
@@ -514,12 +682,12 @@ class DurationDialog(tk.Toplevel):
         box = tk.Frame(parent, bg=BG)
         box.pack(side="left")
         tk.Label(box, text=label, bg=BG, fg=DIM,
-                 font=("Segoe UI Semibold", -int(8 * s))).pack(anchor="w", pady=(0, int(3 * s)))
+                 font=(UI_FONT_SEMIBOLD, -int(8 * s))).pack(anchor="w", pady=(0, int(3 * s)))
         var = tk.StringVar(value=str(value))
         entry = tk.Entry(box, textvariable=var, width=4, justify="center", bg=CARD, fg=TEXT,
                          insertbackground=ACCENT, relief="flat", bd=0,
                          highlightthickness=1, highlightbackground=STROKE, highlightcolor=ACCENT,
-                         font=("Cascadia Mono SemiBold", -int(24 * s)))
+                         font=(MONO_FONT, -int(24 * s)))
         entry.pack(ipady=int(6 * s))
         entry._var = var  # type: ignore[attr-defined]
         return entry
@@ -629,6 +797,21 @@ class FocusForge:
         self._last_tick = self.started_at
 
     # ------------------------------------------------------------- setup --
+    def _set_window_icon(self, root: tk.Tk) -> None:
+        try:
+            if IS_WINDOWS:
+                icon = resource_path(os.path.join("assets", "icon.ico"))
+                if os.path.exists(icon):
+                    root.iconbitmap(icon)
+                return
+            png = resource_path(os.path.join("assets", "logo.png"))
+            if os.path.exists(png):
+                photo = tk.PhotoImage(file=png)
+                root.iconphoto(True, photo)
+                root._icon_photo = photo  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
     def _compute_scale(self) -> float:
         try:
             dpi = float(self.root.winfo_fpixels("1i"))
@@ -650,26 +833,21 @@ class FocusForge:
         r.configure(bg=BG)
         r.geometry(f"{W}x{H}")
         r.resizable(False, False)
-        try:
-            icon = resource_path(os.path.join("assets", "icon.ico"))
-            if os.path.exists(icon):
-                r.iconbitmap(icon)
-        except Exception:
-            pass
+        self._set_window_icon(r)
         r.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self.f_title = ("Segoe UI Semibold", -self._px(17))
-        self.f_tiny = ("Segoe UI Semibold", -self._px(7))
-        self.f_btn = ("Segoe UI Semibold", -self._px(12))
-        self.f_chip = ("Segoe UI Semibold", -self._px(10))
-        self.f_small = ("Segoe UI Semibold", -self._px(9))
-        self.f_label = ("Segoe UI Semibold", -self._px(8))
-        self.f_time = ("Cascadia Mono SemiBold", -self._px(44))
-        self.f_goal = ("Segoe UI Semibold", -self._px(10))
-        self.f_sub = ("Segoe UI", -self._px(11))
-        self.f_entry = ("Segoe UI", -self._px(12))
-        self.f_stat = ("Segoe UI Semibold", -self._px(19))
-        self.f_foot = ("Segoe UI", -self._px(9))
+        self.f_title = (UI_FONT_SEMIBOLD, -self._px(17))
+        self.f_tiny = (UI_FONT_SEMIBOLD, -self._px(7))
+        self.f_btn = (UI_FONT_SEMIBOLD, -self._px(12))
+        self.f_chip = (UI_FONT_SEMIBOLD, -self._px(10))
+        self.f_small = (UI_FONT_SEMIBOLD, -self._px(9))
+        self.f_label = (UI_FONT_SEMIBOLD, -self._px(8))
+        self.f_time = (MONO_FONT, -self._px(44))
+        self.f_goal = (UI_FONT_SEMIBOLD, -self._px(10))
+        self.f_sub = (UI_FONT, -self._px(11))
+        self.f_entry = (UI_FONT, -self._px(12))
+        self.f_stat = (UI_FONT_SEMIBOLD, -self._px(19))
+        self.f_foot = (UI_FONT, -self._px(9))
 
         self._children: list[tuple[tk.Widget, dict]] = []
         self._hidden_in_focus: set[tk.Widget] = set()
@@ -994,10 +1172,10 @@ class FocusForge:
 
         # keep the ring typography proportional when focus mode grows the ring
         k = max(0.72, min(2.9, size / float(self._px(420))))
-        f_goal = ("Segoe UI Semibold", -max(7, int(self._px(10) * k)))
-        f_small = ("Segoe UI Semibold", -max(7, int(self._px(9) * k)))
-        f_time = ("Cascadia Mono SemiBold", -max(18, int(self._px(44) * k)))
-        f_sub = ("Segoe UI", -max(8, int(self._px(11) * k)))
+        f_goal = (UI_FONT_SEMIBOLD, -max(7, int(self._px(10) * k)))
+        f_small = (UI_FONT_SEMIBOLD, -max(7, int(self._px(9) * k)))
+        f_time = (MONO_FONT, -max(18, int(self._px(44) * k)))
+        f_sub = (UI_FONT, -max(8, int(self._px(11) * k)))
 
         self._ring_img_item = cv.create_image(cx, cy, anchor="center", tags="ring")
         cv.tag_lower("ring")
@@ -1170,11 +1348,7 @@ class FocusForge:
         self._flash("CHALLENGE COMPLETE", 6.0, MINT)
         self._confetti()
         self._beep([(784, 130), (988, 130), (1175, 150), (1568, 420)])
-        try:
-            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
-            flash_taskbar(hwnd)
-        except Exception:
-            pass
+        flash_taskbar(self.root)
 
     def _log_session(self):
         self.data["sessions"].append({
@@ -1185,17 +1359,7 @@ class FocusForge:
         self.data["sessions"] = self.data["sessions"][-100:]
 
     def _beep(self, notes):
-        if not winsound:
-            return
-
-        def run():
-            for freq, dur in notes:
-                try:
-                    winsound.Beep(int(freq), int(dur))
-                except Exception:
-                    pass
-
-        threading.Thread(target=run, daemon=True).start()
+        play_tones(notes)
 
     def _confetti(self):
         cv = self.ring

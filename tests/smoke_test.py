@@ -10,13 +10,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 # keep the test away from the real profile
 _TMP_PROFILE = tempfile.mkdtemp(prefix="focusforge-test-")
-os.environ["APPDATA"] = _TMP_PROFILE
+os.environ["FOCUSFORGE_DATA_DIR"] = _TMP_PROFILE
 
 import app as ff  # noqa: E402
 
 ff._enable_dpi_awareness()
 root = app = None
 failures = []
+DATA_DIR_OVERRIDE_OK = str(ff.DATA_DIR) == _TMP_PROFILE
 
 
 def check(name, cond, extra=""):
@@ -48,6 +49,7 @@ pump(0.8)
 
 W, H = root.winfo_width(), root.winfo_height()
 print(f"window {W}x{H}  scale={a.s}  ring={a._ring_size}px")
+check("data dir override honored", DATA_DIR_OVERRIDE_OK, str(ff.DATA_DIR))
 check("ring items built", a._ring_img_item is not None)
 check("ring size sane", 200 <= a._ring_size <= W, f"{a._ring_size}")
 check("time item present", a._ring_time_item is not None)
