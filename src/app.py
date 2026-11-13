@@ -4,6 +4,7 @@ A single-file tkinter application with a custom rendered UI:
   * circular progress ring with gradient + glow
   * pause / resume, reset, +5 min, custom durations (25m .. 24h)
   * automatic 5 minute rest timer after a finished challenge
+  * manual 5 / 10 / 15 minute breaks that pause and resume the session
   * live stats (today, streak, sessions), persisted to %APPDATA%
   * always-on-top and keep-awake toggles
   * fullscreen focus mode, keyboard shortcuts, firework finish (sound + confetti)
@@ -34,7 +35,7 @@ except Exception:  # pragma: no cover - non Windows
     winsound = None
 
 APP_NAME = "FocusForge"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DATA_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
 DATA_FILE = DATA_DIR / "stats.json"
 
@@ -73,10 +74,12 @@ MILESTONES = [
     (90, "ALMOST DONE"),
 ]
 
-# seconds of rest offered automatically after a finished challenge
+# default rest length; the REST button also offers the other choices
 BREAK_SECONDS = 5 * 60
-# let the firework sound and confetti land before the rest timer takes over
-BREAK_DELAY_MS = 3200
+REST_CHOICES = (5, 10, 15)
+# the finish firework always plays in full before the rest timer takes over
+BREAK_SETTLE_MS = 1200      # quiet beat after the confetti has landed
+BREAK_FALLBACK_MS = 9000    # safety net if the celebration cannot animate
 
 RING_PALETTES = {
     "focus": [(0.0, (76, 141, 255)), (0.55, (34, 211, 238)), (1.0, (52, 211, 153))],
@@ -758,9 +761,11 @@ class FocusForge:
         self.break_active = False
         self.break_running = False
         self.break_done = False
+        self.break_manual = False
         self.break_target = BREAK_SECONDS
         self.break_elapsed = 0.0
         self.break_started_at = 0.0
+        self._resume_after_break = False
         self.aot = False
         self.awake = True
         self.focus_mode = False
@@ -789,6 +794,8 @@ class FocusForge:
         self._resize_job = None
         self._closing = False
         self._btn_label = ""
+        self._rest_label = ""
+        self._rest_menu = None
         self._muted = demo
 
         self.data = self._load_stats()
@@ -945,15 +952,19 @@ class FocusForge:
         self._add(controls, fill="x", padx=PAD, pady=(self._px(2), 0))
         inner = tk.Frame(controls, bg=BG)
         inner.pack()
-        self.reset_pill = Pill(inner, "RESET", command=self.reset, w=self._px(104), h=self._px(46),
+        self.reset_pill = Pill(inner, "RESET", command=self.reset, w=self._px(82), h=self._px(46),
                                radius=self._px(12), style="ghost", font=self.f_small, bg=BG)
-        self.reset_pill.pack(side="left", pady=self._px(3))
-        self.primary_pill = Pill(inner, "START", command=self._primary, w=self._px(168), h=self._px(52),
+        self.reset_pill.pack(side="left", padx=self._px(2), pady=self._px(3))
+        self.primary_pill = Pill(inner, "START", command=self._primary, w=self._px(152), h=self._px(52),
                                  radius=self._px(14), style="primary", font=self.f_btn, bg=BG)
-        self.primary_pill.pack(side="left", padx=self._px(10))
-        self.plus_pill = Pill(inner, "+5 MIN", command=self.add_time, w=self._px(104), h=self._px(46),
+        self.primary_pill.pack(side="left", padx=self._px(5))
+        self.plus_pill = Pill(inner, "+5 MIN", command=self.add_time, w=self._px(82), h=self._px(46),
                               radius=self._px(12), style="ghost", font=self.f_small, bg=BG)
-        self.plus_pill.pack(side="left", pady=self._px(3))
+        self.plus_pill.pack(side="left", padx=self._px(2), pady=self._px(3))
+        self.rest_pill = Pill(inner, "REST \u25be", command=self._open_rest_menu, w=self._px(82),
+                              h=self._px(46), radius=self._px(12), style="toggle_mint",
+                              font=self.f_small, bg=BG)
+        self.rest_pill.pack(side="left", padx=(self._px(5), self._px(2)), pady=self._px(3))
 
         # presets ----------------------------------------------------------
         presets = tk.Frame(self.root, bg=BG)
@@ -1010,7 +1021,7 @@ class FocusForge:
         footer = tk.Frame(self.root, bg=BG)
         self._hidden_in_focus.add(footer)
         self._add(footer, fill="x", padx=PAD, pady=(self._px(10), self._px(12)))
-        tk.Label(footer, text="SPACE  start / pause    R  reset    F10  mini    F11  focus",
+        tk.Label(footer, text="SPACE  start / pause    R  reset    B  break    F10  mini    F11  focus",
                  bg=BG, fg=DIM, font=self.f_foot).pack(side="left")
         tk.Label(footer, text=f"v{VERSION}", bg=BG, fg=DIM, font=self.f_foot).pack(side="right")
 
@@ -1093,34 +1104,48 @@ class FocusForge:
                 pass
             self._break_job = None
 
-    def _clear_break(self) -> None:
+    def _clear_break(self, resume: bool = True) -> None:
+        """Reset the rest state; a manual break can hand straight back to focus."""
+        resume = bool(resume and self.break_manual and self._resume_after_break
+                      and not self.done and self.elapsed_now() > 0)
         self._cancel_break_job()
         self.break_active = False
         self.break_running = False
         self.break_done = False
+        self.break_manual = False
         self.break_target = BREAK_SECONDS
         self.break_elapsed = 0.0
         self.break_started_at = 0.0
+        self._resume_after_break = False
+        if resume and not self.running:
+            self.start()
 
     def _schedule_break(self) -> None:
-        """Queue the automatic rest timer just after the finish celebration."""
+        """Safety net: rest starts even if the celebration cannot animate."""
         self._cancel_break_job()
-        if self._demo or not self.done:
+        if self._demo or not self.done or self.break_active:
             return
-        self._break_job = self.root.after(BREAK_DELAY_MS, self.start_break)
+        self._break_job = self.root.after(BREAK_FALLBACK_MS, self.start_break)
 
-    def start_break(self) -> None:
-        self._break_job = None
-        if self._closing:
+    def _arm_break_after_celebration(self) -> None:
+        """The firework and confetti always play in full before the rest."""
+        if self._demo or self._closing or not self.done or self.break_active:
             return
+        self._cancel_break_job()
+        self._break_job = self.root.after(BREAK_SETTLE_MS, self.start_break)
+
+    def _begin_break(self, minutes: int, manual: bool = False, resume: bool = False) -> None:
         self.break_active = True
         self.break_running = True
         self.break_done = False
+        self.break_manual = bool(manual)
+        self.break_target = max(60, int(minutes) * 60)
         self.break_elapsed = 0.0
         self.break_started_at = time.monotonic()
+        self._resume_after_break = bool(resume)
         self._last_tick = self.break_started_at
         self._last_render_key = None
-        # let the confetti finish; a clean ring makes the rest state obvious
+        # a clean ring makes the rest state obvious
         try:
             if self._conf_job:
                 self.root.after_cancel(self._conf_job)
@@ -1138,6 +1163,27 @@ class FocusForge:
         self._render_ring(force=True)
         self._refresh_buttons()
 
+    def start_break(self) -> None:
+        """Automatic rest that follows a completed challenge."""
+        self._break_job = None
+        if self._closing or self.break_active:
+            return
+        self._begin_break(max(1, int(round(BREAK_SECONDS / 60))), manual=False, resume=False)
+
+    def start_rest(self, minutes: int = 5) -> None:
+        """REST button / B key: pause the session and take a break."""
+        if self._closing or self.break_active:
+            return
+        was_running = self.running
+        if was_running:
+            self.pause()
+        self._cancel_break_job()
+        self._clear_break(resume=False)
+        self._begin_break(minutes, manual=not self.done, resume=was_running)
+        if not self._muted:
+            play_chime()
+        self._flash(f"{int(minutes)} MIN BREAK", 2.0, MINT)
+
     def _finish_break(self) -> None:
         self.break_elapsed = float(self.break_target)
         self.break_running = False
@@ -1146,7 +1192,10 @@ class FocusForge:
         self._last_render_key = None
         self._render_ring(force=True)
         self._refresh_buttons()
-        self._flash("REST COMPLETE", 3.2, MINT)
+        if self.break_manual:
+            self._flash("BREAK COMPLETE", 2.4, MINT)
+        else:
+            self._flash("REST COMPLETE", 3.2, MINT)
         if not self._muted:
             play_chime()
         try:
@@ -1154,7 +1203,8 @@ class FocusForge:
             flash_taskbar(hwnd)
         except Exception:
             pass
-        self._break_job = self.root.after(2800, self._dismiss_break)
+        delay = 1800 if self.break_manual else 2800
+        self._break_job = self.root.after(delay, self._dismiss_break)
 
     def skip_break(self) -> None:
         if not self.break_active:
@@ -1162,11 +1212,19 @@ class FocusForge:
         self._dismiss_break("BREAK SKIPPED")
 
     def _dismiss_break(self, msg: str | None = None) -> None:
-        self._clear_break()
-        self._soft_reset()
+        manual = self.break_manual
+        if manual:
+            self._clear_break()
+            resumed = self.running
+        else:
+            self._clear_break(resume=False)
+            self._soft_reset()
+            resumed = False
         self._last_render_key = None
         if msg:
             self._flash(msg, 2.0, MUTED)
+        elif resumed:
+            self._flash("BACK TO FOCUS", 2.4, ACCENT)
         self._render_ring(force=True)
         self._refresh_buttons()
 
@@ -1227,7 +1285,7 @@ class FocusForge:
         self._apply_awake()
 
     def reset(self):
-        self._clear_break()
+        self._clear_break(resume=False)
         self._soft_reset()
         self._flash("TIMER RESET", 1.6, MUTED)
         self._render_ring(force=True)
@@ -1246,7 +1304,7 @@ class FocusForge:
         self._save_stats()
 
     def set_target(self, seconds: int, custom: bool = False):
-        self._clear_break()
+        self._clear_break(resume=False)
         seconds = max(60, min(int(seconds), 168 * 3600))
         was_running = self.running
         self.running = False
@@ -1437,14 +1495,16 @@ class FocusForge:
             self.ring.itemconfigure(self._ring_time_item, text=text)
 
         if self._ring_goal_item is not None:
-            self.ring.itemconfigure(self._ring_goal_item, text="R E S T   &   R E S E T")
+            goal = "R E S T   B R E A K" if self.break_manual else "R E S T   &   R E S E T"
+            self.ring.itemconfigure(self._ring_goal_item, text=goal)
 
         if self._ring_sub_item is not None:
             minutes = max(1, int(round(self.break_target / 60)))
-            self.ring.itemconfigure(
-                self._ring_sub_item,
-                text=f"{minutes} min break  \u00b7  stretch, breathe, drink water",
-            )
+            if self.break_manual:
+                sub = f"{minutes} min break  \u00b7  session is paused and resumes after"
+            else:
+                sub = f"{minutes} min break  \u00b7  stretch, breathe, drink water"
+            self.ring.itemconfigure(self._ring_sub_item, text=sub)
 
         self._draw_status()
 
@@ -1460,8 +1520,9 @@ class FocusForge:
                                     fill=col)
         elif self.break_active:
             if self.break_done:
+                msg = "BREAK COMPLETE" if self.break_manual else "REST COMPLETE"
                 self.ring.itemconfigure(self._ring_status_item,
-                                        text=" ".join("REST COMPLETE"), fill=MINT)
+                                        text=" ".join(msg), fill=MINT)
             else:
                 self.ring.itemconfigure(self._ring_status_item,
                                         text=" ".join("RESTING"), fill=CYAN)
@@ -1477,8 +1538,12 @@ class FocusForge:
     def _refresh_buttons(self):
         style = "primary"
         if self.break_active:
-            label = "NEW SESSION" if self.break_done else "SKIP BREAK"
-            style = "primary" if self.break_done else "break_btn"
+            if self.break_done:
+                label = "BACK TO WORK" if self.break_manual else "NEW SESSION"
+                style = "primary"
+            else:
+                label = "BACK TO WORK" if self.break_manual else "SKIP BREAK"
+                style = "break_btn"
         elif self.done:
             label = "NEW SESSION"
         elif self.running:
@@ -1492,6 +1557,16 @@ class FocusForge:
             self._btn_label = key
             self.primary_pill.set_text(label)
             self.primary_pill.set_style(style)
+
+        if self.break_active:
+            rest_label, rest_style = "END REST", "toggle_mint"
+        else:
+            rest_label, rest_style = "REST \u25be", "toggle_mint"
+        rest_key = (rest_label, rest_style)
+        if rest_key != self._rest_label:
+            self._rest_label = rest_key
+            self.rest_pill.set_text(rest_label)
+            self.rest_pill.set_style(rest_style)
 
     def _refresh_stats(self):
         today_sec = self.data["daily"].get(date.today().isoformat(), 0.0)
@@ -1512,10 +1587,11 @@ class FocusForge:
 
     def _update_title(self):
         if self.break_active:
+            word = "break" if self.break_manual else "rest"
             if self.break_done:
-                title = f"REST COMPLETE  -  {APP_NAME}"
+                title = f"{word.upper()} COMPLETE  -  {APP_NAME}"
             else:
-                title = f"{fmt_hms(self.break_remaining())}  rest  -  {APP_NAME}"
+                title = f"{fmt_hms(self.break_remaining())}  {word}  -  {APP_NAME}"
         elif self.running:
             title = f"{fmt_hms(self.remaining())}  -  {APP_NAME}"
         elif self.done:
@@ -1639,16 +1715,44 @@ class FocusForge:
                     pass
             self._conf_parts = []
             self._conf_job = None
+            # the firework has landed - only now may the rest timer take over
+            self._arm_break_after_celebration()
 
     # -------------------------------------------------------------- dialog --
     def _open_custom(self):
         DurationDialog(self, max(1, int(round(self.target / 60))))
+
+    def _open_rest_menu(self):
+        """REST pill: pick a 5 / 10 / 15 minute break, or end the current one."""
+        if self.break_active:
+            self.skip_break()
+            return
+        menu = tk.Menu(self.root, tearoff=0, bg=CARD, fg=TEXT, activebackground=ACCENT,
+                       activeforeground="#FFFFFF", bd=0, relief="flat")
+        for minutes in REST_CHOICES:
+            menu.add_command(label=f"{minutes} minute break",
+                             command=lambda m=minutes: self.start_rest(m))
+        if self.elapsed_now() > 0 and not self.done:
+            menu.add_separator()
+            menu.add_command(label="Your session timer pauses", state="disabled")
+        self._rest_menu = menu
+        try:
+            x = self.rest_pill.winfo_rootx()
+            y = self.rest_pill.winfo_rooty() + self.rest_pill.winfo_height() + self._px(4)
+            menu.tk_popup(x, y)
+        finally:
+            try:
+                menu.grab_release()
+            except Exception:
+                pass
 
     # ---------------------------------------------------------------- keys --
     def _bind_keys(self):
         self.root.bind("<space>", self._key_space)
         self.root.bind("<Key-r>", self._key_reset)
         self.root.bind("<Key-R>", self._key_reset)
+        self.root.bind("<Key-b>", self._key_break)
+        self.root.bind("<Key-B>", self._key_break_long)
         self.root.bind("<F10>", self._key_widget)
         self.root.bind("<Key-w>", self._key_widget)
         self.root.bind("<Key-W>", self._key_widget)
@@ -1678,6 +1782,24 @@ class FocusForge:
         if self._typing():
             return
         self.reset()
+        return "break"
+
+    def _key_break(self, _e=None):
+        if self._typing():
+            return
+        if self.break_active:
+            self.skip_break()
+        else:
+            self.start_rest(5)
+        return "break"
+
+    def _key_break_long(self, _e=None):
+        if self._typing():
+            return
+        if self.break_active:
+            self.skip_break()
+        else:
+            self.start_rest(10)
         return "break"
 
     def _key_focus(self, _e=None):
@@ -1767,6 +1889,8 @@ class FocusForge:
                        activeforeground="#FFFFFF", bd=0, relief="flat")
         menu.add_command(label="Open full window", command=self._exit_widget_mode)
         menu.add_command(label="Start / pause", command=self._primary)
+        menu.add_command(label="Take a 5 min break", command=lambda: self.start_rest(5))
+        menu.add_command(label="Take a 10 min break", command=lambda: self.start_rest(10))
         menu.add_command(label="Reset timer", command=self.reset)
         menu.add_separator()
         menu.add_command(label="Quit FocusForge", command=self._on_close)

@@ -73,8 +73,17 @@ def capture(hwnd: int) -> Image.Image:
     gdi32.DeleteDC(hdc_mem)
     user32.ReleaseDC(hwnd, hdc_win)
 
-    img = Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1)
-    return img.convert("RGB")
+    img = Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1).convert("RGB")
+    # crop away the DWM title bar / borders so the shot is pure app UI
+    origin = wintypes.POINT(0, 0)
+    user32.ClientToScreen(hwnd, ctypes.byref(origin))
+    crect = wintypes.RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(crect))
+    left, top = origin.x - rect.left, origin.y - rect.top
+    box = (left, top, left + crect.right, top + crect.bottom)
+    if (left or top) and box[2] <= w and box[3] <= h:
+        img = img.crop(box)
+    return img
 
 
 def window_handle(widget) -> int:
@@ -217,7 +226,27 @@ clean_edges(capture(window_handle(root))).save(
     os.path.join(DOCS, "screenshot-break.png"), optimize=True)
 print("saved screenshot-break.png")
 
-# 5) mini widget floating over a mock study desktop ------------------------------
+# 5) manual break taken in the middle of a session -------------------------------
+app.skip_break()
+pump(root, 0.6)
+app.target = 24 * 3600
+app.elapsed = 9 * 3600 + 12 * 60
+app.start()
+pump(root, 0.6)
+app.start_rest(10)
+app.break_elapsed = 3 * 60          # pose it mid-break for the docs image
+app.break_started_at = time.monotonic() - app.break_elapsed
+app._flash_msg = ""
+app._flash_until = 0.0
+app._last_render_key = None
+pump(root, 1.0)
+clean_edges(capture(window_handle(root))).save(
+    os.path.join(DOCS, "screenshot-rest.png"), optimize=True)
+print("saved screenshot-rest.png")
+app.skip_break()
+pump(root, 0.8)
+
+# 6) mini widget floating over a mock study desktop ------------------------------
 app._enter_widget_mode()
 pump(root, 0.9)
 pill = grab_window(window_handle(app._widget))

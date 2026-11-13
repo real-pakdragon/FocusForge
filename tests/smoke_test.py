@@ -61,6 +61,10 @@ for w, _ in a._children:
     if w.winfo_ismapped():
         bottom = max(bottom, w.winfo_y() + w.winfo_height())
 check("layout fits window", bottom <= H, f"bottom={bottom} H={H}")
+right = a.rest_pill.winfo_x() + a.rest_pill.winfo_width()
+check("rest button present", a.rest_pill.itemcget(a.rest_pill._txt_item, "text").startswith("REST"))
+check("controls fit width", right <= a.rest_pill.master.winfo_width(),
+      f"{right} / {a.rest_pill.master.winfo_width()}")
 
 # start / pause / resume
 a.start()
@@ -111,7 +115,10 @@ check("primary says NEW SESSION",
       a.primary_pill.itemcget(a.primary_pill._txt_item, "text") == "NEW SESSION")
 check("session logged", len(a.data["sessions"]) >= 1)
 check("rest timer queued", a._break_job is not None)
-check("auto rest starts", wait_for(lambda: a.break_active, 5.0))
+# the finish firework + confetti always play before the rest timer takes over
+check("firework plays before rest", a.done and not a.break_active)
+a._arm_break_after_celebration()
+check("auto rest starts", wait_for(lambda: a.break_active, 4.0))
 pump(0.35)
 check("rest is running", a.break_running and not a.break_done)
 check("rest shows time", a.ring.itemcget(a._ring_time_item, "text").startswith("00:0"),
@@ -141,6 +148,51 @@ check("rest complete status", a.ring.itemcget(a._ring_status_item, "text").repla
       a.ring.itemcget(a._ring_status_item, "text"))
 check("rest auto dismisses", wait_for(lambda: not a.break_active and not a.done, 5.0))
 check("rest state cleared", a.break_elapsed == 0.0 and a.break_target == ff.BREAK_SECONDS)
+
+# manual REST button: pauses the session, then hands back where it left off
+a.set_target(25 * 60)
+a.start()
+pump(0.9)
+before = a.elapsed_now()
+a.start_rest(5)
+pump(0.15)
+check("manual break active", a.break_active and a.break_running and a.break_manual)
+check("manual break is 5 min", a.break_target == 300)
+check("session paused for break", not a.running)
+check("session time frozen", abs(a.elapsed_now() - before) < 0.05, f"{a.elapsed_now():.2f}")
+check("primary says BACK TO WORK",
+      a.primary_pill.itemcget(a.primary_pill._txt_item, "text") == "BACK TO WORK")
+check("rest pill says END REST",
+      a.rest_pill.itemcget(a.rest_pill._txt_item, "text") == "END REST")
+pump(1.1)
+check("break clock counts", a.break_elapsed_now() >= 0.9, f"{a.break_elapsed_now():.2f}")
+check("session still frozen", abs(a.elapsed_now() - before) < 0.05)
+a.skip_break()
+pump(0.35)
+check("break skipped returns to focus", a.running and not a.break_active)
+check("session kept its time", a.elapsed_now() >= before - 0.05, f"{a.elapsed_now():.2f}")
+a.pause()
+a.reset()
+pump(0.2)
+
+# a 10 minute break runs out and resumes the session on its own
+a.set_target(25 * 60)
+a.start()
+pump(0.6)
+kept = a.elapsed_now()
+a.start_rest(10)
+check("10 min break length", a.break_target == 600)
+a.break_started_at -= 601.0
+check("manual break completes",
+      wait_for(lambda: a.break_done and not a.break_running, 2.5))
+check("break complete status",
+      a.ring.itemcget(a._ring_status_item, "text").replace(" ", "") == "BREAKCOMPLETE",
+      a.ring.itemcget(a._ring_status_item, "text"))
+check("manual break resumes", wait_for(lambda: not a.break_active and a.running, 5.0))
+check("resumed at kept time", a.elapsed_now() >= kept - 0.05, f"{a.elapsed_now():.2f}")
+a.pause()
+a.reset()
+pump(0.2)
 
 # focus mode
 a._toggle_focus_mode()

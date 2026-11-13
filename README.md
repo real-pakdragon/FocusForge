@@ -33,7 +33,7 @@
 | | |
 | :--- | :--- |
 | **Installer** &nbsp;·&nbsp; recommended | **Portable** |
-| [**`FocusForge-Setup-1.1.0.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge-Setup-1.1.0.exe) | [**`FocusForge.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge.exe) |
+| [**`FocusForge-Setup-1.2.0.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge-Setup-1.2.0.exe) | [**`FocusForge.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge.exe) |
 | 32 MB — installs per-user, **no admin rights**, adds Desktop + Start Menu shortcuts and a real uninstaller. | 30 MB — a single self-contained file. Double-click and go, no installation. |
 
 > **Windows SmartScreen:** the builds are not code-signed yet, so Windows may show
@@ -51,23 +51,29 @@
 | 🌀 **Animated progress ring** — anti-aliased gradient ring with a soft glow and rounded end caps. | 📊 **Live stats** — today's focus time, day streak and completed sessions, saved between launches. |
 | 💡 **Keep awake** — stops Windows from sleeping or blanking the screen while the timer runs. | 📌 **Always on top** — keeps the timer above your notes and textbooks. |
 | 🖥️ **Focus mode** — `F11` turns the app into a fullscreen clock with everything else hidden. | 🎆 **Firework finish** — a synthesised launch whistle, boom and crackle plus confetti and a taskbar flash. |
-| ☕ **Automatic 5 minute rest** — when a challenge completes, a mint rest ring takes over and returns you to ready when it ends. | 🎧 **No audio files** — every finish cue is generated in code, so the download stays one small executable. |
+| ☕ **Take a break anytime** — the **REST** button (or `B`) offers 5, 10 or 15 minutes. Your session clock pauses and picks up exactly where it stopped. | ⏳ **Automatic rest** — when a challenge completes, the full firework and confetti play first, then a mint 5 minute rest ring takes over. |
 | 🪟 **Mini widget** — `F10` shrinks the timer to a small, always-on-top clock you can drag into a corner. | 🖱️ **Stays out of the way** — drag to move it, single-click to pause, double-click for the full window. |
 
 **Milestone nudges** at 25%, 50%, 75% and 90% give you a quiet chime and a status line —
-enough to notice, not enough to break concentration. During a rest you can press
-`Space` (or the mint **SKIP BREAK** button) to start the next session early.
+enough to notice, not enough to break concentration. During a break press `Space` (or
+the mint **BACK TO WORK** button) to end it early; the session resumes automatically.
 
 ## Screenshots
 
 <p align="center">
   <img src="docs/screenshot.png" width="268" alt="FocusForge main window during a 24 hour challenge">
   &nbsp;
-  <img src="docs/screenshot-complete.png" width="268" alt="Completed challenge with confetti">
-  &nbsp;
-  <img src="docs/screenshot-break.png" width="268" alt="Automatic five minute rest timer">
+  <img src="docs/screenshot-complete.png" width="268" alt="Completed challenge with firework confetti">
   <br>
-  <em>Mid-challenge &nbsp;·&nbsp; Challenge complete &nbsp;·&nbsp; Rest timer</em>
+  <em>Mid-challenge &nbsp;·&nbsp; Challenge complete — firework + confetti</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshot-rest.png" width="268" alt="Manual 10 minute rest taken in the middle of a session">
+  &nbsp;
+  <img src="docs/screenshot-break.png" width="268" alt="Automatic five minute rest after a challenge">
+  <br>
+  <em>REST button — 5 / 10 / 15 min, clock paused &nbsp;·&nbsp; Automatic rest after a challenge</em>
 </p>
 
 <p align="center">
@@ -86,8 +92,10 @@ enough to notice, not enough to break concentration. During a rest you can press
 
 | Key | Action |
 | :---: | :--- |
-| `Space` | Start / pause / resume / skip rest |
+| `Space` | Start / pause / resume / end break |
 | `R` | Reset the timer |
+| `B` | Take a 5 minute break (session pauses) |
+| `Shift` + `B` | Take a 10 minute break |
 | `F10` or `W` | Toggle the mini widget |
 | `F11` | Toggle fullscreen focus mode |
 | `Esc` | Leave focus mode or the mini widget |
@@ -96,7 +104,7 @@ enough to notice, not enough to break concentration. During a rest you can press
 
 ### Installer (recommended)
 
-1. Download [`FocusForge-Setup-1.1.0.exe`](https://github.com/real-pakdragon/FocusForge/releases/latest).
+1. Download [`FocusForge-Setup-1.2.0.exe`](https://github.com/real-pakdragon/FocusForge/releases/latest).
 2. Double-click it and follow the wizard — it needs **no administrator rights**.
 
 It installs to `%LOCALAPPDATA%\Programs\FocusForge`, creates Desktop and Start Menu
@@ -106,7 +114,7 @@ A running copy is closed automatically before files are replaced, so upgrades ar
 Unattended install:
 
 ```powershell
-.\FocusForge-Setup-1.1.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+.\FocusForge-Setup-1.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
 ### Portable
@@ -127,7 +135,7 @@ cd FocusForge
 python -m pip install pillow pyinstaller
 winget install --id JRSoftware.InnoSetup --scope user
 
-# runs the smoke test, builds dist\FocusForge.exe and release\FocusForge-Setup-1.1.0.exe
+# runs the smoke test, builds dist\FocusForge.exe and release\FocusForge-Setup-1.2.0.exe
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
@@ -192,10 +200,11 @@ Elapsed time is computed from a monotonic clock, not by counting ticks, so a pau
 a hitch or a slow frame never makes the timer drift.
 
 **What is the rest timer?**
-As soon as a challenge completes, FocusForge waits a few seconds for the firework
-and confetti to land, then flips the ring to a mint 5 minute rest countdown. Press
-`Space` or **SKIP BREAK** to jump straight into the next session. When the rest ends
-you hear a soft chime and the app returns to *READY*.
+There are two ways to rest. Press **REST** (or `B` for 5 minutes, `Shift` + `B` for 10)
+at any time: your session clock pauses, a mint ring counts the break down, and when it
+ends the session resumes by itself exactly where it stopped. When a challenge
+completes, the firework and confetti always play in full first, then a 5 minute rest
+starts on its own. Press `Space` or **BACK TO WORK** to end any break early.
 
 **Can I keep the timer small while I study?**
 Yes — press `F10` (or click **MINI**) to turn the whole app into a 196×66 widget that
@@ -233,7 +242,7 @@ Build outputs:
 
 ```text
 dist\FocusForge.exe                 portable single file   (~30 MB)
-release\FocusForge-Setup-1.1.0.exe  installer for any PC   (~32 MB)
+release\FocusForge-Setup-1.2.0.exe  installer for any PC   (~32 MB)
 ```
 
 ## Tech notes
