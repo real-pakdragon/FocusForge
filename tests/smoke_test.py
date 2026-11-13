@@ -44,6 +44,8 @@ def wait_for(cond, timeout=3.0):
 
 root = ff.tk.Tk()
 a = ff.FocusForge(root)
+a._muted = True          # keep the test quiet
+a._beep = lambda notes: None
 pump(0.8)
 
 W, H = root.winfo_width(), root.winfo_height()
@@ -108,6 +110,37 @@ check("completed", a.done)
 check("primary says NEW SESSION",
       a.primary_pill.itemcget(a.primary_pill._txt_item, "text") == "NEW SESSION")
 check("session logged", len(a.data["sessions"]) >= 1)
+check("rest timer queued", a._break_job is not None)
+check("auto rest starts", wait_for(lambda: a.break_active, 5.0))
+pump(0.35)
+check("rest is running", a.break_running and not a.break_done)
+check("rest shows time", a.ring.itemcget(a._ring_time_item, "text").startswith("00:0"),
+      a.ring.itemcget(a._ring_time_item, "text"))
+check("rest status line", a.ring.itemcget(a._ring_status_item, "text") == "R E S T I N G",
+      a.ring.itemcget(a._ring_status_item, "text"))
+check("primary says SKIP BREAK",
+      a.primary_pill.itemcget(a.primary_pill._txt_item, "text") == "SKIP BREAK")
+check("skip button is mint", a.primary_pill.style_name == "break_btn")
+check("rest uses break palette", a._last_render_key[1][0] == "break")
+
+a.skip_break()
+pump(0.35)
+check("rest skipped", not a.break_active and not a.break_done)
+check("back to ready", not a.done and a.primary_pill.itemcget(
+    a.primary_pill._txt_item, "text") == "START")
+check("skip message shown", "BREAK" in a._flash_msg)
+check("ready status returns", wait_for(
+    lambda: a.ring.itemcget(a._ring_status_item, "text") == "R E A D Y", 3.0))
+
+# a full rest countdown plays out and returns to ready on its own
+a.start_break()
+a.break_target = 1
+a.break_started_at -= 2.0
+check("rest completes", wait_for(lambda: a.break_done and not a.break_running, 2.5))
+check("rest complete status", a.ring.itemcget(a._ring_status_item, "text").replace(" ", "") == "RESTCOMPLETE",
+      a.ring.itemcget(a._ring_status_item, "text"))
+check("rest auto dismisses", wait_for(lambda: not a.break_active and not a.done, 5.0))
+check("rest state cleared", a.break_elapsed == 0.0 and a.break_target == ff.BREAK_SECONDS)
 
 # focus mode
 a._toggle_focus_mode()
@@ -117,6 +150,30 @@ a._toggle_focus_mode()
 check("back from focus", wait_for(lambda: a._children[0][0].winfo_ismapped()))
 pump(0.4)
 
+# mini widget mode
+class _E:
+    def __init__(self, xr, yr):
+        self.x_root, self.y_root = xr, yr
+
+a._toggle_widget_mode()
+check("widget created", a._widget is not None)
+check("main window hidden", wait_for(lambda: root.state() == "withdrawn"))
+check("widget mapped", wait_for(lambda: a._widget is not None and a._widget.winfo_ismapped()))
+check("widget stays on top", bool(a._widget.attributes("-topmost")))
+check("widget shows time", a._widget_c.itemcget(a._widget_time, "text") == ff.fmt_hms(a.remaining()))
+check("mini chip lit", a.mini_pill.style_name == "toggle_blue")
+wx, wy = a._widget.winfo_x(), a._widget.winfo_y()
+a._widget_press(_E(wx + 20, wy + 20))
+a._widget_motion(_E(wx + 120, wy + 90))
+a._widget_release(_E(wx + 120, wy + 90))
+pump(0.2)
+check("widget dragged", a._widget_pos == (wx + 100, wy + 70), f"{a._widget_pos}")
+a._widget_double_click()
+check("widget closed", a._widget is None)
+check("main window restored", wait_for(lambda: root.state() == "normal"))
+check("mini chip reset", a.mini_pill.style_name == "toggle")
+pump(0.4)
+
 # always on top + awake toggles
 a._toggle_pin()
 check("pin toggled", a.aot)
@@ -124,6 +181,21 @@ a._toggle_pin()
 a._toggle_awake()
 check("awake toggled", not a.awake)
 a._toggle_awake()
+
+# finish sounds are synthesised as valid mono 16-bit PCM wav data
+fw = ff.build_firework_wav()
+ch = ff.build_chime_wav()
+for name, data, min_len in (("firework", fw, 150000), ("chime", ch, 80000)):
+    check(f"{name} wav header", data[:4] == b"RIFF" and data[8:12] == b"WAVE"
+          and data[36:40] == b"data", f"{len(data)} bytes")
+    check(f"{name} wav length", len(data) >= min_len, f"{len(data)} bytes")
+ff.preload_sounds()
+check("sounds preloaded", isinstance(ff._FIREWORK_WAV, bytes) and isinstance(ff._CHIME_WAV, bytes))
+
+# the rest palette is visually distinct from the focus palette
+focus_ring = ff.render_ring(320, 0.5, "focus")
+break_ring = ff.render_ring(320, 0.5, "break")
+check("break ring differs from focus", focus_ring.tobytes() != break_ring.tobytes())
 
 # close
 a._on_close()

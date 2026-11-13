@@ -33,7 +33,7 @@
 | | |
 | :--- | :--- |
 | **Installer** &nbsp;·&nbsp; recommended | **Portable** |
-| [**`FocusForge-Setup-1.0.0.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge-Setup-1.0.0.exe) | [**`FocusForge.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge.exe) |
+| [**`FocusForge-Setup-1.1.0.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge-Setup-1.1.0.exe) | [**`FocusForge.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge.exe) |
 | 32 MB — installs per-user, **no admin rights**, adds Desktop + Start Menu shortcuts and a real uninstaller. | 30 MB — a single self-contained file. Double-click and go, no installation. |
 
 > **Windows SmartScreen:** the builds are not code-signed yet, so Windows may show
@@ -50,19 +50,24 @@
 | ➕ **+5 minute top-up** — extend a running challenge without losing progress. | 🎯 **Session goal** — type what you're working on and it is shown inside the ring. |
 | 🌀 **Animated progress ring** — anti-aliased gradient ring with a soft glow and rounded end caps. | 📊 **Live stats** — today's focus time, day streak and completed sessions, saved between launches. |
 | 💡 **Keep awake** — stops Windows from sleeping or blanking the screen while the timer runs. | 📌 **Always on top** — keeps the timer above your notes and textbooks. |
-| 🖥️ **Focus mode** — `F11` turns the app into a fullscreen clock with everything else hidden. | 🎉 **Finish celebration** — confetti, a chime and a taskbar flash when the challenge completes. |
+| 🖥️ **Focus mode** — `F11` turns the app into a fullscreen clock with everything else hidden. | 🎆 **Firework finish** — a synthesised launch whistle, boom and crackle plus confetti and a taskbar flash. |
+| ☕ **Automatic 5 minute rest** — when a challenge completes, a mint rest ring takes over and returns you to ready when it ends. | 🎧 **No audio files** — every finish cue is generated in code, so the download stays one small executable. |
+| 🪟 **Mini widget** — `F10` shrinks the timer to a small, always-on-top clock you can drag into a corner. | 🖱️ **Stays out of the way** — drag to move it, single-click to pause, double-click for the full window. |
 
 **Milestone nudges** at 25%, 50%, 75% and 90% give you a quiet chime and a status line —
-enough to notice, not enough to break concentration.
+enough to notice, not enough to break concentration. During a rest you can press
+`Space` (or the mint **SKIP BREAK** button) to start the next session early.
 
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshot.png" width="378" alt="FocusForge main window during a 24 hour challenge">
-  &nbsp;&nbsp;
-  <img src="docs/screenshot-complete.png" width="378" alt="Completed challenge with confetti">
+  <img src="docs/screenshot.png" width="268" alt="FocusForge main window during a 24 hour challenge">
+  &nbsp;
+  <img src="docs/screenshot-complete.png" width="268" alt="Completed challenge with confetti">
+  &nbsp;
+  <img src="docs/screenshot-break.png" width="268" alt="Automatic five minute rest timer">
   <br>
-  <em>Mid-challenge &nbsp;·&nbsp; Challenge complete</em>
+  <em>Mid-challenge &nbsp;·&nbsp; Challenge complete &nbsp;·&nbsp; Rest timer</em>
 </p>
 
 <p align="center">
@@ -71,20 +76,27 @@ enough to notice, not enough to break concentration.
   <em>Focus mode — press F11</em>
 </p>
 
+<p align="center">
+  <img src="docs/screenshot-widget.png" width="760" alt="Mini widget mode floating above study material">
+  <br>
+  <em>Mini widget — F10 shrinks the timer to a corner and keeps it always on top</em>
+</p>
+
 ## Keyboard shortcuts
 
 | Key | Action |
 | :---: | :--- |
-| `Space` | Start / pause / resume |
+| `Space` | Start / pause / resume / skip rest |
 | `R` | Reset the timer |
+| `F10` or `W` | Toggle the mini widget |
 | `F11` | Toggle fullscreen focus mode |
-| `Esc` | Leave focus mode |
+| `Esc` | Leave focus mode or the mini widget |
 
 ## Install
 
 ### Installer (recommended)
 
-1. Download [`FocusForge-Setup-1.0.0.exe`](https://github.com/real-pakdragon/FocusForge/releases/latest).
+1. Download [`FocusForge-Setup-1.1.0.exe`](https://github.com/real-pakdragon/FocusForge/releases/latest).
 2. Double-click it and follow the wizard — it needs **no administrator rights**.
 
 It installs to `%LOCALAPPDATA%\Programs\FocusForge`, creates Desktop and Start Menu
@@ -94,7 +106,7 @@ A running copy is closed automatically before files are replaced, so upgrades ar
 Unattended install:
 
 ```powershell
-.\FocusForge-Setup-1.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+.\FocusForge-Setup-1.1.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
 ### Portable
@@ -115,7 +127,7 @@ cd FocusForge
 python -m pip install pillow pyinstaller
 winget install --id JRSoftware.InnoSetup --scope user
 
-# runs the smoke test, builds dist\FocusForge.exe and release\FocusForge-Setup-1.0.0.exe
+# runs the smoke test, builds dist\FocusForge.exe and release\FocusForge-Setup-1.1.0.exe
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
@@ -149,8 +161,9 @@ Everything is local and human readable:
 %APPDATA%\FocusForge\stats.json
 ```
 
-It holds your per-day focus seconds, completed sessions, goal text and last used
-duration. Delete the file and you start from zero — nothing leaves your PC.
+It holds your per-day focus seconds, completed sessions, goal text, last used
+duration and the mini widget position. Delete the file and you start from zero —
+nothing leaves your PC.
 
 ## Uninstall
 
@@ -172,18 +185,30 @@ No. Both the installer and the app run entirely in your user profile.
 **Will Windows go to sleep during a 24 hour challenge?**
 Not while the timer is running and *AWAKE* is on — the app holds
 `SetThreadExecutionState` to keep the system and display awake, and releases it on
-pause or exit.
+pause or exit. The same applies during the automatic rest timer.
 
 **Does the timer keep counting if the PC sleeps anyway?**
 Elapsed time is computed from a monotonic clock, not by counting ticks, so a pause,
 a hitch or a slow frame never makes the timer drift.
+
+**What is the rest timer?**
+As soon as a challenge completes, FocusForge waits a few seconds for the firework
+and confetti to land, then flips the ring to a mint 5 minute rest countdown. Press
+`Space` or **SKIP BREAK** to jump straight into the next session. When the rest ends
+you hear a soft chime and the app returns to *READY*.
+
+**Can I keep the timer small while I study?**
+Yes — press `F10` (or click **MINI**) to turn the whole app into a 196×66 widget that
+shows only the remaining time and a slim progress line. It is always on top, so drag
+it into a screen corner and leave it there. Single-click it to start/pause,
+double-click to get the full window back; its position is remembered between launches.
 
 **Can I use it on several PCs?**
 Yes. The installer is a normal per-user setup, so run it on as many machines as you
 like. Stats are per-machine.
 
 **Is there a Mac/Linux build?**
-No, the UI leans on Windows APIs for the dark title bar, taskbar flash, chimes and
+No, the UI leans on Windows APIs for the dark title bar, taskbar flash, sound and
 keep-awake. The timer logic itself is pure Python.
 
 ## Project layout
@@ -208,7 +233,7 @@ Build outputs:
 
 ```text
 dist\FocusForge.exe                 portable single file   (~30 MB)
-release\FocusForge-Setup-1.0.0.exe  installer for any PC   (~32 MB)
+release\FocusForge-Setup-1.1.0.exe  installer for any PC   (~32 MB)
 ```
 
 ## Tech notes
@@ -218,6 +243,12 @@ rounded panels, buttons and a gradient progress ring with a glow — so there ar
 third-party UI frameworks and the executable stays small. Bitmaps and gradients are
 cached per size, which keeps the once-a-second ring refresh in the low tens of
 milliseconds even at fullscreen sizes.
+
+The finish sound is not a bundled audio file: `build_firework_wav()` synthesises a
+rising launch whistle, a low boom, crackling sparks and a sparkle tail into an
+in-memory PCM buffer, then plays it through `winsound` with `SND_MEMORY`. The rest
+timer uses the same technique for its closing chime, and both buffers are rendered
+once in a background thread so the first completion never stutters.
 
 ## License
 

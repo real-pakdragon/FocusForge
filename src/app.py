@@ -3,18 +3,21 @@
 A single-file tkinter application with a custom rendered UI:
   * circular progress ring with gradient + glow
   * pause / resume, reset, +5 min, custom durations (25m .. 24h)
+  * automatic 5 minute rest timer after a finished challenge
   * live stats (today, streak, sessions), persisted to %APPDATA%
   * always-on-top and keep-awake toggles
-  * fullscreen focus mode, keyboard shortcuts, completion confetti + chime
+  * fullscreen focus mode, keyboard shortcuts, firework finish (sound + confetti)
 """
 
 from __future__ import annotations
 
+import array
 import ctypes
 import json
 import math
 import os
 import random
+import struct
 import sys
 import threading
 import time
@@ -31,7 +34,7 @@ except Exception:  # pragma: no cover - non Windows
     winsound = None
 
 APP_NAME = "FocusForge"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 DATA_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
 DATA_FILE = DATA_DIR / "stats.json"
 
@@ -70,11 +73,16 @@ MILESTONES = [
     (90, "ALMOST DONE"),
 ]
 
-RING_STOPS = [
-    (0.0, (76, 141, 255)),
-    (0.55, (34, 211, 238)),
-    (1.0, (52, 211, 153)),
-]
+# seconds of rest offered automatically after a finished challenge
+BREAK_SECONDS = 5 * 60
+# let the firework sound and confetti land before the rest timer takes over
+BREAK_DELAY_MS = 3200
+
+RING_PALETTES = {
+    "focus": [(0.0, (76, 141, 255)), (0.55, (34, 211, 238)), (1.0, (52, 211, 153))],
+    "break": [(0.0, (52, 211, 153)), (0.50, (34, 211, 238)), (1.0, (167, 139, 250))],
+}
+RING_STOPS = RING_PALETTES["focus"]
 
 S_BASE_W = 470
 S_BASE_H = 792
@@ -181,31 +189,37 @@ def cached_rounded(w, h, r, fill, outline=None, ow=1) -> ImageTk.PhotoImage:
     return img
 
 
-_GRAD_GRID: Image.Image | None = None
-_GRAD_CACHE: dict[int, Image.Image] = {}
-_RING_CACHE: dict[int, dict] = {}
+_GRAD_GRID: dict[str, Image.Image] = {}
+_GRAD_CACHE: dict[tuple[str, int], Image.Image] = {}
+_RING_CACHE: dict[tuple[str, int], dict] = {}
 _ALPHA_HALF = [int(v * 0.50) for v in range(256)]
 
 
-def ring_gradient(size: int) -> Image.Image:
-    """Cached blue -> cyan -> mint vertical gradient."""
-    global _GRAD_GRID
-    cached = _GRAD_CACHE.get(size)
+def ring_gradient(size: int, palette: str = "focus") -> Image.Image:
+    """Cached vertical gradient for the given ring palette."""
+    key = (palette, size)
+    cached = _GRAD_CACHE.get(key)
     if cached is not None:
         return cached
-    if _GRAD_GRID is None:
+    grid = _GRAD_GRID.get(palette)
+    if grid is None:
+        stops = RING_PALETTES[palette]
         base = Image.linear_gradient("L")
         luts = [
-            [lerp_stops(RING_STOPS, v / 255.0)[ch] for v in range(256)] for ch in range(3)
+            [lerp_stops(stops, v / 255.0)[ch] for v in range(256)] for ch in range(3)
         ]
-        _GRAD_GRID = Image.merge("RGB", tuple(base.point(lut) for lut in luts))
-    grad = _GRAD_GRID.resize((size, size), Image.BILINEAR)
-    _GRAD_CACHE[size] = grad
+        grid = Image.merge("RGB", tuple(base.point(lut) for lut in luts))
+        _GRAD_GRID[palette] = grid
+    grad = grid.resize((size, size), Image.BILINEAR)
+    _GRAD_CACHE[key] = grad
+    if len(_GRAD_CACHE) > 24:
+        _GRAD_CACHE.pop(next(iter(_GRAD_CACHE)))
     return grad
 
 
-def _ring_assets(diameter: int) -> dict:
-    assets = _RING_CACHE.get(diameter)
+def _ring_assets(diameter: int, palette: str = "focus") -> dict:
+    key = (palette, diameter)
+    assets = _RING_CACHE.get(key)
     if assets is not None:
         return assets
     ss = max(1.0, min(2.0, 900.0 / diameter))
@@ -223,6 +237,7 @@ def _ring_assets(diameter: int) -> dict:
     ad.ellipse(box, fill=255)
     ad.ellipse((pad + w, pad + w, S - pad - 1 - w, S - pad - 1 - w), fill=0)
 
+    stops = RING_PALETTES[palette]
     assets = {
         "S": S,
         "pad": pad,
@@ -230,19 +245,20 @@ def _ring_assets(diameter: int) -> dict:
         "box": box,
         "track": track,
         "annulus": annulus,
-        "grad": ring_gradient(diameter),
+        "grad": ring_gradient(diameter, palette),
+        "glow_rgb": mix(stops[0][1], stops[-1][1], 0.45),
         "glow_size": max(12, diameter // 2),
     }
-    _RING_CACHE[diameter] = assets
-    if len(_RING_CACHE) > 6:
+    _RING_CACHE[key] = assets
+    if len(_RING_CACHE) > 8:
         _RING_CACHE.pop(next(iter(_RING_CACHE)))
     return assets
 
 
-def render_ring(diameter: int, frac: float) -> Image.Image:
+def render_ring(diameter: int, frac: float, palette: str = "focus") -> Image.Image:
     """Anti-aliased progress ring with a soft glow, drawn with Pillow."""
     diameter = max(48, int(diameter))
-    a = _ring_assets(diameter)
+    a = _ring_assets(diameter, palette)
     S, pad, w, box = a["S"], a["pad"], a["w"], a["box"]
     out = a["track"].copy()
 
@@ -273,7 +289,7 @@ def render_ring(diameter: int, frac: float) -> Image.Image:
     g = a["glow_size"]
     small = mask.resize((g, g), Image.BILINEAR).filter(ImageFilter.GaussianBlur(3))
     glow_mask = small.point(_ALPHA_HALF).resize((diameter, diameter), Image.BILINEAR)
-    glow = Image.new("RGBA", (diameter, diameter), (34, 150, 255, 255))
+    glow = Image.new("RGBA", (diameter, diameter), (*a["glow_rgb"], 255))
     glow.putalpha(glow_mask)
     return Image.alpha_composite(glow, out)
 
@@ -348,6 +364,172 @@ def keep_awake(enabled: bool) -> None:
         pass
 
 
+# ----------------------------------------------------------------- sound ----
+# The finish sound is synthesised here instead of shipping a .wav: a launch
+# whistle, a low boom, a sprinkling of crackle and a long sparkle tail. It is
+# built once in a background thread so the first completion never stutters.
+_SR = 44100
+_SND_LOCK = threading.Lock()
+_FIREWORK_WAV: bytes | None = None
+_CHIME_WAV: bytes | None = None
+
+
+def _pcm_wav(samples, rate: int = _SR) -> bytes:
+    pcm = array.array("h", (max(-32767, min(32767, int(v * 32767))) for v in samples))
+    if sys.byteorder != "little":
+        pcm.byteswap()
+    data = pcm.tobytes()
+    header = (
+        b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVE"
+        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+        + b"data" + struct.pack("<I", len(data))
+    )
+    return header + data
+
+
+def build_firework_wav() -> bytes:
+    """A firework: rising whistle, deep boom, crackling sparks, fading shimmer."""
+    rate = _SR
+    dur = 3.0
+    n = int(rate * dur)
+    rnd = random.Random(20261108)
+    out = [0.0] * n
+
+    # rising launch whistle
+    phase = 0.0
+    launch = int(0.55 * rate)
+    for i in range(launch):
+        t = i / rate
+        freq = 620.0 + 1250.0 * (t / 0.55) ** 0.7
+        phase += 2.0 * math.pi * freq / rate
+        env = min(1.0, t / 0.06) * max(0.0, 1.0 - (t / 0.55) ** 3)
+        out[i] += 0.09 * env * math.sin(phase)
+
+    # boom: low-passed noise burst + sub thump + sharp crack on impact
+    start = int(0.50 * rate)
+    lp = 0.0
+    a = 0.16
+    for i in range(start, n):
+        t = (i - start) / rate
+        if t > 2.0:
+            break
+        noise = rnd.uniform(-1.0, 1.0)
+        lp += a * (noise - lp)
+        body = lp * 1.35 * math.exp(-t / 0.32)
+        thump = math.sin(2.0 * math.pi * 55.0 * t) * math.exp(-t / 0.45) * 0.55
+        crack = noise * math.exp(-t / 0.012) * 0.35
+        out[i] += body + thump + crack
+
+    # crackle: sparse high-passed pops that thin out over time
+    t0, t1 = 0.55, 2.75
+    for _ in range(130):
+        at = rnd.uniform(t0, t1)
+        s = int(at * rate)
+        if s >= n:
+            continue
+        length = int(rnd.uniform(0.003, 0.012) * rate)
+        amp = rnd.uniform(0.05, 0.30) * (1.0 - (at - t0) / (t1 - t0)) ** 1.2
+        prev = 0.0
+        for j in range(length):
+            if s + j >= n:
+                break
+            x = rnd.uniform(-1.0, 1.0)
+            out[s + j] += (x - prev) * amp * (1.0 - j / length) ** 2
+            prev = x
+
+    # shimmering sparkle tail
+    prev = 0.0
+    base = int(0.45 * rate)
+    for i in range(base, n):
+        t = (i - base) / rate
+        x = rnd.uniform(-1.0, 1.0)
+        out[i] += (x - prev) * 0.14 * math.exp(-t / 0.85)
+        prev = x
+
+    peak = max(1e-9, max(abs(v) for v in out))
+    gain = 0.92 / peak
+    fade = int(0.008 * rate)
+    tail = int(0.30 * rate)
+    for i in range(n):
+        v = out[i] * gain
+        if i < fade:
+            v *= i / fade
+        if i >= n - tail:
+            v *= (n - i) / tail
+        out[i] = math.tanh(v * 1.2) * 0.95
+    return _pcm_wav(out, rate)
+
+
+def build_chime_wav() -> bytes:
+    """Soft three note chime for the end of a rest break."""
+    rate = _SR
+    dur = 1.6
+    n = int(rate * dur)
+    out = [0.0] * n
+    for freq, at, decay, amp in (
+        (659.25, 0.00, 0.55, 0.30),
+        (987.77, 0.16, 0.65, 0.24),
+        (1318.51, 0.32, 0.85, 0.15),
+    ):
+        s = int(at * rate)
+        for i in range(s, n):
+            t = (i - s) / rate
+            env = math.exp(-t / decay) * min(1.0, t / 0.004)
+            out[i] += amp * env * (
+                math.sin(2.0 * math.pi * freq * t)
+                + 0.25 * math.sin(4.0 * math.pi * freq * t)
+            )
+    peak = max(1e-9, max(abs(v) for v in out))
+    gain = 0.55 / peak
+    tail = int(0.25 * rate)
+    for i in range(n):
+        v = out[i] * gain
+        if i >= n - tail:
+            v *= (n - i) / tail
+        out[i] = v
+    return _pcm_wav(out, rate)
+
+
+def preload_sounds() -> None:
+    global _FIREWORK_WAV, _CHIME_WAV
+    if _FIREWORK_WAV is not None and _CHIME_WAV is not None:
+        return
+    with _SND_LOCK:
+        if _FIREWORK_WAV is None:
+            _FIREWORK_WAV = build_firework_wav()
+        if _CHIME_WAV is None:
+            _CHIME_WAV = build_chime_wav()
+
+
+def _play_wav(data: bytes | None) -> None:
+    if not winsound or not data:
+        return
+    try:
+        winsound.PlaySound(
+            data, winsound.SND_MEMORY | winsound.SND_ASYNC | winsound.SND_NODEFAULT
+        )
+    except Exception:
+        pass
+
+
+def play_firework() -> None:
+    global _FIREWORK_WAV
+    if not winsound:
+        return
+    if _FIREWORK_WAV is None:
+        preload_sounds()
+    _play_wav(_FIREWORK_WAV)
+
+
+def play_chime() -> None:
+    global _CHIME_WAV
+    if not winsound:
+        return
+    if _CHIME_WAV is None:
+        preload_sounds()
+    _play_wav(_CHIME_WAV)
+
+
 # ---------------------------------------------------------------- widgets ---
 class Pill(tk.Canvas):
     """Flat, rounded, hover-aware button / chip drawn with Pillow images."""
@@ -360,6 +542,7 @@ class Pill(tk.Canvas):
         "toggle": {"fill": CARD, "text": MUTED, "hover": CARD_2, "press": CARD, "outline": STROKE, "ow": 1},
         "toggle_blue": {"fill": "#122A3D", "text": "#8FC4FF", "hover": "#16334A", "press": "#0F2434", "outline": "#2C5D8F", "ow": 1},
         "toggle_mint": {"fill": "#102B24", "text": "#8AF0C9", "hover": "#13342C", "press": "#0D241E", "outline": "#1F6B54", "ow": 1},
+        "break_btn": {"fill": "#2FD399", "text": "#04231A", "hover": "#4BE0AC", "press": "#23BC86", "outline": None, "ow": 0},
     }
 
     def __init__(self, master, text, command=None, w=100, h=38, radius=12,
@@ -572,9 +755,24 @@ class FocusForge:
         self.running = False
         self.started_at = 0.0
         self.done = False
+        self.break_active = False
+        self.break_running = False
+        self.break_done = False
+        self.break_target = BREAK_SECONDS
+        self.break_elapsed = 0.0
+        self.break_started_at = 0.0
         self.aot = False
         self.awake = True
         self.focus_mode = False
+        self.widget_mode = False
+        self._widget = None
+        self._widget_c = None
+        self._widget_time = None
+        self._widget_fill = None
+        self._widget_menu = None
+        self._widget_pos: tuple[int, int] | None = None
+        self._widget_drag = None
+        self._widget_click_job = None
         self.milestones: set[int] = set()
         self._last_tick = time.monotonic()
         self._last_sec = -1
@@ -586,16 +784,25 @@ class FocusForge:
         self._conf_parts: list[list] = []
         self._conf_job = None
         self._after_job = None
+        self._break_job = None
         self._ring_size = 0
         self._resize_job = None
         self._closing = False
         self._btn_label = ""
+        self._muted = demo
 
         self.data = self._load_stats()
         self.goal = str(self.data.get("goal", "") or "")
         self.target = int(self.data.get("last_target", 1440 * 60) or 1440 * 60)
         self.target = max(60, min(self.target, 168 * 3600))
+        pos = self.data.get("widget_pos")
+        if isinstance(pos, (list, tuple)) and len(pos) == 2:
+            try:
+                self._widget_pos = (int(pos[0]), int(pos[1]))
+            except (TypeError, ValueError):
+                self._widget_pos = None
 
+        threading.Thread(target=preload_sounds, daemon=True).start()
         self._build_window()
         self._build_ui()
         self._bind_keys()
@@ -710,6 +917,10 @@ class FocusForge:
         self.pin_pill = Pill(bar, "PIN", command=self._toggle_pin, w=self._px(56), h=self._px(30),
                              radius=self._px(9), style="toggle", font=self.f_small, bg=BG)
         self.pin_pill.pack(side="right", pady=self._px(2))
+        self.mini_pill = Pill(bar, "MINI", command=self._toggle_widget_mode,
+                              w=self._px(62), h=self._px(30), radius=self._px(9),
+                              style="toggle", font=self.f_small, bg=BG)
+        self.mini_pill.pack(side="right", padx=(0, self._px(8)), pady=self._px(2))
         self.awake_pill = Pill(bar, "AWAKE", command=self._toggle_awake, w=self._px(76), h=self._px(30),
                                radius=self._px(9), style="toggle_mint", font=self.f_small, bg=BG)
         self.awake_pill.pack(side="right", padx=(0, self._px(8)), pady=self._px(2))
@@ -799,7 +1010,7 @@ class FocusForge:
         footer = tk.Frame(self.root, bg=BG)
         self._hidden_in_focus.add(footer)
         self._add(footer, fill="x", padx=PAD, pady=(self._px(10), self._px(12)))
-        tk.Label(footer, text="SPACE  pause    R  reset    F11  focus mode",
+        tk.Label(footer, text="SPACE  start / pause    R  reset    F10  mini    F11  focus",
                  bg=BG, fg=DIM, font=self.f_foot).pack(side="left")
         tk.Label(footer, text=f"v{VERSION}", bg=BG, fg=DIM, font=self.f_foot).pack(side="right")
 
@@ -832,6 +1043,7 @@ class FocusForge:
             "sessions": self.data["sessions"][-100:],
             "goal": self.goal,
             "last_target": int(self.target),
+            "widget_pos": list(self._widget_pos) if self._widget_pos else None,
             "version": VERSION,
         }
         try:
@@ -858,7 +1070,109 @@ class FocusForge:
             return 0.0
         return max(0.0, min(1.0, self.elapsed_now() / self.target))
 
+    # --------------------------------------------------------------- rest --
+    def break_elapsed_now(self) -> float:
+        e = self.break_elapsed
+        if self.break_running:
+            e += time.monotonic() - self.break_started_at
+        return min(e, float(self.break_target))
+
+    def break_remaining(self) -> float:
+        return max(0.0, self.break_target - self.break_elapsed_now())
+
+    def break_progress(self) -> float:
+        if self.break_target <= 0:
+            return 0.0
+        return max(0.0, min(1.0, self.break_elapsed_now() / self.break_target))
+
+    def _cancel_break_job(self) -> None:
+        if self._break_job:
+            try:
+                self.root.after_cancel(self._break_job)
+            except Exception:
+                pass
+            self._break_job = None
+
+    def _clear_break(self) -> None:
+        self._cancel_break_job()
+        self.break_active = False
+        self.break_running = False
+        self.break_done = False
+        self.break_target = BREAK_SECONDS
+        self.break_elapsed = 0.0
+        self.break_started_at = 0.0
+
+    def _schedule_break(self) -> None:
+        """Queue the automatic rest timer just after the finish celebration."""
+        self._cancel_break_job()
+        if self._demo or not self.done:
+            return
+        self._break_job = self.root.after(BREAK_DELAY_MS, self.start_break)
+
+    def start_break(self) -> None:
+        self._break_job = None
+        if self._closing:
+            return
+        self.break_active = True
+        self.break_running = True
+        self.break_done = False
+        self.break_elapsed = 0.0
+        self.break_started_at = time.monotonic()
+        self._last_tick = self.break_started_at
+        self._last_render_key = None
+        # let the confetti finish; a clean ring makes the rest state obvious
+        try:
+            if self._conf_job:
+                self.root.after_cancel(self._conf_job)
+        except Exception:
+            pass
+        self._conf_job = None
+        self._conf_parts = []
+        try:
+            self.ring.delete("confetti")
+        except Exception:
+            pass
+        self._flash_msg = ""
+        self._flash_until = 0.0
+        self._apply_awake()
+        self._render_ring(force=True)
+        self._refresh_buttons()
+
+    def _finish_break(self) -> None:
+        self.break_elapsed = float(self.break_target)
+        self.break_running = False
+        self.break_done = True
+        self._apply_awake()
+        self._last_render_key = None
+        self._render_ring(force=True)
+        self._refresh_buttons()
+        self._flash("REST COMPLETE", 3.2, MINT)
+        if not self._muted:
+            play_chime()
+        try:
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            flash_taskbar(hwnd)
+        except Exception:
+            pass
+        self._break_job = self.root.after(2800, self._dismiss_break)
+
+    def skip_break(self) -> None:
+        if not self.break_active:
+            return
+        self._dismiss_break("BREAK SKIPPED")
+
+    def _dismiss_break(self, msg: str | None = None) -> None:
+        self._clear_break()
+        self._soft_reset()
+        self._last_render_key = None
+        if msg:
+            self._flash(msg, 2.0, MUTED)
+        self._render_ring(force=True)
+        self._refresh_buttons()
+
     def start(self):
+        if self.break_active:
+            return
         if self.done:
             self._soft_reset()
         if self.running:
@@ -890,7 +1204,14 @@ class FocusForge:
             self.start()
 
     def _primary(self):
+        if self.break_active:
+            if self.break_running:
+                self.skip_break()
+            else:
+                self._dismiss_break()
+            return
         if self.done:
+            self._cancel_break_job()
             self._soft_reset()
             self.start()
         elif self.running:
@@ -906,6 +1227,7 @@ class FocusForge:
         self._apply_awake()
 
     def reset(self):
+        self._clear_break()
         self._soft_reset()
         self._flash("TIMER RESET", 1.6, MUTED)
         self._render_ring(force=True)
@@ -913,6 +1235,7 @@ class FocusForge:
         self._save_stats()
 
     def add_time(self, seconds: int = 300):
+        self._clear_break()
         if self.done:
             self._soft_reset()
         self.target = max(60, min(self.target + seconds, 168 * 3600))
@@ -923,6 +1246,7 @@ class FocusForge:
         self._save_stats()
 
     def set_target(self, seconds: int, custom: bool = False):
+        self._clear_break()
         seconds = max(60, min(int(seconds), 168 * 3600))
         was_running = self.running
         self.running = False
@@ -961,7 +1285,7 @@ class FocusForge:
         self._flash("PC STAYS AWAKE" if self.awake else "SLEEP ALLOWED", 1.5, MINT if self.awake else MUTED)
 
     def _apply_awake(self):
-        keep_awake(self.awake and self.running)
+        keep_awake(self.awake and (self.running or self.break_running))
 
     # -------------------------------------------------------------- layout --
     def _on_ring_configure(self, _e=None):
@@ -1014,12 +1338,19 @@ class FocusForge:
     def _render_ring(self, force: bool = False):
         if self._ring_img_item is None or self._ring_size <= 0:
             return
-        frac = 1.0 if self.done else self.progress()
-        key = (round(frac, 5), self.done, self._ring_size)
+        if self.break_active:
+            frac = 1.0 if self.break_done else self.break_progress()
+            palette = "break"
+            phase = ("break", self.break_done)
+        else:
+            frac = 1.0 if self.done else self.progress()
+            palette = "focus"
+            phase = ("focus", self.done)
+        key = (round(frac, 5), phase, self._ring_size)
         if not force and key == self._last_render_key:
             return
         self._last_render_key = key
-        img = render_ring(self._ring_size, frac)
+        img = render_ring(self._ring_size, frac, palette)
         self._ring_photo = ImageTk.PhotoImage(img)
         self.ring.itemconfigure(self._ring_img_item, image=self._ring_photo)
 
@@ -1043,6 +1374,9 @@ class FocusForge:
                 self._complete()
             else:
                 self._check_milestones()
+        elif self.break_running:
+            if self.break_elapsed_now() >= self.break_target - 1e-6:
+                self._finish_break()
         if now - self._last_save > 20:
             self._save_stats()
 
@@ -1065,9 +1399,20 @@ class FocusForge:
                 self._beep([(1046, 70)])
 
     def _refresh(self):
-        rem = self.remaining()
         self._render_ring()
 
+        if self.break_active:
+            self._draw_break()
+        else:
+            self._draw_session()
+
+        self._refresh_buttons()
+        self._refresh_stats()
+        self._update_title()
+        self._refresh_widget()
+
+    def _draw_session(self):
+        rem = self.remaining()
         text = "00:00:00" if self.done else fmt_hms(rem)
         if self._ring_time_item is not None:
             self.ring.itemconfigure(self._ring_time_item, text=text)
@@ -1083,30 +1428,58 @@ class FocusForge:
             self.ring.itemconfigure(self._ring_sub_item,
                                     text=f"{pct:.1f}% of {fmt_compact(self.target)}")
 
-        # status line (also used for flash messages)
-        if self._ring_status_item is not None:
-            now = time.monotonic()
-            if self._flash_msg and now < self._flash_until:
-                age = self._flash_until - now
-                pulse = 0.60 + 0.40 * (0.5 + 0.5 * math.sin(now * 5.5))
-                col = rgb_hex(mix(hex_rgb(self._flash_color), hex_rgb(BG), 0.15 + 0.35 * (1 - pulse)))
-                self.ring.itemconfigure(self._ring_status_item, text=" ".join(self._flash_msg),
-                                        fill=col)
-            elif self.done:
-                self.ring.itemconfigure(self._ring_status_item, text=" ".join("COMPLETE"), fill=MINT)
-            elif self.running:
-                self.ring.itemconfigure(self._ring_status_item, text=" ".join("FOCUSING"), fill=ACCENT)
-            elif self.elapsed_now() > 0:
-                self.ring.itemconfigure(self._ring_status_item, text=" ".join("PAUSED"), fill=AMBER)
-            else:
-                self.ring.itemconfigure(self._ring_status_item, text=" ".join("READY"), fill=MUTED)
+        self._draw_status()
 
-        self._refresh_buttons()
-        self._refresh_stats()
-        self._update_title(rem)
+    def _draw_break(self):
+        rem = self.break_remaining()
+        text = "00:00:00" if self.break_done else fmt_hms(rem)
+        if self._ring_time_item is not None:
+            self.ring.itemconfigure(self._ring_time_item, text=text)
+
+        if self._ring_goal_item is not None:
+            self.ring.itemconfigure(self._ring_goal_item, text="R E S T   &   R E S E T")
+
+        if self._ring_sub_item is not None:
+            minutes = max(1, int(round(self.break_target / 60)))
+            self.ring.itemconfigure(
+                self._ring_sub_item,
+                text=f"{minutes} min break  \u00b7  stretch, breathe, drink water",
+            )
+
+        self._draw_status()
+
+    def _draw_status(self):
+        if self._ring_status_item is None:
+            return
+        now = time.monotonic()
+        if self._flash_msg and now < self._flash_until:
+            age = self._flash_until - now
+            pulse = 0.60 + 0.40 * (0.5 + 0.5 * math.sin(now * 5.5))
+            col = rgb_hex(mix(hex_rgb(self._flash_color), hex_rgb(BG), 0.15 + 0.35 * (1 - pulse)))
+            self.ring.itemconfigure(self._ring_status_item, text=" ".join(self._flash_msg),
+                                    fill=col)
+        elif self.break_active:
+            if self.break_done:
+                self.ring.itemconfigure(self._ring_status_item,
+                                        text=" ".join("REST COMPLETE"), fill=MINT)
+            else:
+                self.ring.itemconfigure(self._ring_status_item,
+                                        text=" ".join("RESTING"), fill=CYAN)
+        elif self.done:
+            self.ring.itemconfigure(self._ring_status_item, text=" ".join("COMPLETE"), fill=MINT)
+        elif self.running:
+            self.ring.itemconfigure(self._ring_status_item, text=" ".join("FOCUSING"), fill=ACCENT)
+        elif self.elapsed_now() > 0:
+            self.ring.itemconfigure(self._ring_status_item, text=" ".join("PAUSED"), fill=AMBER)
+        else:
+            self.ring.itemconfigure(self._ring_status_item, text=" ".join("READY"), fill=MUTED)
 
     def _refresh_buttons(self):
-        if self.done:
+        style = "primary"
+        if self.break_active:
+            label = "NEW SESSION" if self.break_done else "SKIP BREAK"
+            style = "primary" if self.break_done else "break_btn"
+        elif self.done:
             label = "NEW SESSION"
         elif self.running:
             label = "PAUSE"
@@ -1114,10 +1487,11 @@ class FocusForge:
             label = "RESUME"
         else:
             label = "START"
-        if label != self._btn_label:
-            self._btn_label = label
+        key = (label, style)
+        if key != self._btn_label:
+            self._btn_label = key
             self.primary_pill.set_text(label)
-            self.primary_pill.set_style("primary")
+            self.primary_pill.set_style(style)
 
     def _refresh_stats(self):
         today_sec = self.data["daily"].get(date.today().isoformat(), 0.0)
@@ -1136,13 +1510,18 @@ class FocusForge:
             d -= timedelta(days=1)
         return n
 
-    def _update_title(self, rem: float):
-        if self.running:
-            title = f"{fmt_hms(rem)}  -  {APP_NAME}"
+    def _update_title(self):
+        if self.break_active:
+            if self.break_done:
+                title = f"REST COMPLETE  -  {APP_NAME}"
+            else:
+                title = f"{fmt_hms(self.break_remaining())}  rest  -  {APP_NAME}"
+        elif self.running:
+            title = f"{fmt_hms(self.remaining())}  -  {APP_NAME}"
         elif self.done:
             title = f"COMPLETE  -  {APP_NAME}"
         elif self.elapsed_now() > 0:
-            title = f"{fmt_hms(rem)}  paused  -  {APP_NAME}"
+            title = f"{fmt_hms(self.remaining())}  paused  -  {APP_NAME}"
         else:
             title = f"{APP_NAME} - Deep Work Timer"
         try:
@@ -1169,12 +1548,17 @@ class FocusForge:
         self._save_stats()
         self._flash("CHALLENGE COMPLETE", 6.0, MINT)
         self._confetti()
-        self._beep([(784, 130), (988, 130), (1175, 150), (1568, 420)])
+        if not self._muted:
+            if winsound:
+                play_firework()
+            else:
+                self._beep([(784, 130), (988, 130), (1175, 150), (1568, 420)])
         try:
             hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
             flash_taskbar(hwnd)
         except Exception:
             pass
+        self._schedule_break()
 
     def _log_session(self):
         self.data["sessions"].append({
@@ -1265,6 +1649,9 @@ class FocusForge:
         self.root.bind("<space>", self._key_space)
         self.root.bind("<Key-r>", self._key_reset)
         self.root.bind("<Key-R>", self._key_reset)
+        self.root.bind("<F10>", self._key_widget)
+        self.root.bind("<Key-w>", self._key_widget)
+        self.root.bind("<Key-W>", self._key_widget)
         self.root.bind("<F11>", self._key_focus)
         self.root.bind("<Escape>", self._key_escape)
 
@@ -1278,7 +1665,13 @@ class FocusForge:
     def _key_space(self, _e=None):
         if self._typing():
             return
-        self.toggle()
+        if self.break_active:
+            if self.break_running:
+                self.skip_break()
+            else:
+                self._dismiss_break()
+        else:
+            self.toggle()
         return "break"
 
     def _key_reset(self, _e=None):
@@ -1291,7 +1684,16 @@ class FocusForge:
         self._toggle_focus_mode()
         return "break"
 
+    def _key_widget(self, _e=None):
+        if self._typing():
+            return
+        self._toggle_widget_mode()
+        return "break"
+
     def _key_escape(self, _e=None):
+        if self.widget_mode:
+            self._exit_widget_mode()
+            return "break"
         if self.focus_mode:
             self._toggle_focus_mode()
             return "break"
@@ -1310,6 +1712,210 @@ class FocusForge:
             self.root.resizable(False, False)
         self._apply_layout()
         self.root.after(120, lambda: (self._redo_ring(), self._render_ring(force=True)))
+        if not self.focus_mode:
+            # Windows can drop the dark title bar when leaving fullscreen
+            self.root.after(180, lambda: set_dark_title_bar(self.root))
+
+    # ---------------------------------------------------------- mini widget --
+    def _widget_geometry(self) -> tuple[int, int]:
+        return self._px(196), self._px(66)
+
+    def _build_widget(self) -> None:
+        if self._widget is not None:
+            return
+        w, h = self._widget_geometry()
+        top = tk.Toplevel(self.root)
+        top.overrideredirect(True)
+        top.configure(bg=BG)
+        top.attributes("-topmost", True)
+        try:
+            top.attributes("-toolwindow", True)
+        except Exception:
+            pass
+
+        cv = tk.Canvas(top, width=w, height=h, bg=BG, highlightthickness=0, bd=0,
+                       cursor="hand2")
+        cv.pack()
+        self._widget_bg = cached_rounded(w, h, self._px(17), CARD, STROKE, 1)
+        cv.create_image(0, 0, anchor="nw", image=self._widget_bg)
+
+        pad = self._px(14)
+        bar_y = h - self._px(10)
+        cv.create_line(pad, bar_y, w - pad, bar_y, fill=STROKE, width=max(2, self._px(3)),
+                       capstyle="round")
+        self._widget_fill = cv.create_line(pad, bar_y, pad + 1, bar_y, fill=ACCENT,
+                                           width=max(2, self._px(3)), capstyle="round")
+        self._widget_time = cv.create_text(
+            w // 2, h // 2 - self._px(3), text="00:00:00", fill=TEXT,
+            font=("Cascadia Mono SemiBold", -self._px(25)),
+        )
+        self._widget_c = cv
+        self._widget = top
+
+        for seq in ("<ButtonPress-1>", "<B1-Motion>", "<ButtonRelease-1>"):
+            cv.bind(seq, getattr(self, {
+                "<ButtonPress-1>": "_widget_press",
+                "<B1-Motion>": "_widget_motion",
+                "<ButtonRelease-1>": "_widget_release",
+            }[seq]))
+        cv.bind("<Double-Button-1>", self._widget_double_click)
+        top.bind("<Double-Button-1>", self._widget_double_click)
+        top.bind("<Escape>", lambda _e: self._exit_widget_mode())
+        top.bind("<Button-3>", self._widget_menu_popup)
+
+        menu = tk.Menu(top, tearoff=0, bg=CARD, fg=TEXT, activebackground=ACCENT,
+                       activeforeground="#FFFFFF", bd=0, relief="flat")
+        menu.add_command(label="Open full window", command=self._exit_widget_mode)
+        menu.add_command(label="Start / pause", command=self._primary)
+        menu.add_command(label="Reset timer", command=self.reset)
+        menu.add_separator()
+        menu.add_command(label="Quit FocusForge", command=self._on_close)
+        self._widget_menu = menu
+
+        self._place_widget()
+
+    def _place_widget(self) -> None:
+        if self._widget is None:
+            return
+        w, h = self._widget_geometry()
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        if self._widget_pos:
+            x, y = self._widget_pos
+        else:
+            x, y = sw - w - self._px(26), self._px(26)
+        x = max(-w + self._px(48), min(int(x), sw - self._px(48)))
+        y = max(0, min(int(y), sh - self._px(48)))
+        self._widget.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _refresh_widget(self) -> None:
+        if self._widget_c is None or self._widget_time is None:
+            return
+        if self.break_active:
+            frac = self.break_progress()
+            if self.break_done:
+                text, color = "00:00:00", MINT
+            else:
+                text, color = fmt_hms(self.break_remaining()), CYAN
+        elif self.done:
+            text, color, frac = "00:00:00", MINT, 1.0
+        elif self.running:
+            text, color, frac = fmt_hms(self.remaining()), ACCENT, self.progress()
+        elif self.elapsed_now() > 0:
+            text, color, frac = fmt_hms(self.remaining()), AMBER, self.progress()
+        else:
+            text, color, frac = fmt_hms(self.target), TEXT, 0.0
+        self._widget_c.itemconfigure(self._widget_time, text=text, fill=color)
+        if self._widget_fill is not None:
+            w, h = self._widget_geometry()
+            pad = self._px(14)
+            y = h - self._px(10)
+            end = pad + max(1, int((w - 2 * pad) * frac))
+            self._widget_c.coords(self._widget_fill, pad, y, end, y)
+            self._widget_c.itemconfigure(self._widget_fill, fill=color)
+
+    def _widget_press(self, e):
+        if self._widget is None:
+            return
+        self._widget_drag = (e.x_root, e.y_root,
+                             self._widget.winfo_x(), self._widget.winfo_y())
+        self._widget_moved = False
+
+    def _widget_motion(self, e):
+        if self._widget is None or not self._widget_drag:
+            return
+        x0, y0, wx, wy = self._widget_drag
+        dx, dy = e.x_root - x0, e.y_root - y0
+        if abs(dx) + abs(dy) > self._px(3):
+            self._widget_moved = True
+        self._widget.geometry(f"+{wx + dx}+{wy + dy}")
+
+    def _widget_release(self, _e=None):
+        if self._widget is None:
+            return
+        if self._widget_drag:
+            if not getattr(self, "_widget_moved", False):
+                self._widget_schedule_click()
+            else:
+                self._widget.update_idletasks()
+                self._widget_pos = (self._widget.winfo_x(), self._widget.winfo_y())
+                self._save_stats()
+        self._widget_drag = None
+
+    def _widget_schedule_click(self) -> None:
+        self._cancel_widget_click()
+        self._widget_click_job = self.root.after(220, self._widget_click)
+
+    def _cancel_widget_click(self) -> None:
+        if self._widget_click_job:
+            try:
+                self.root.after_cancel(self._widget_click_job)
+            except Exception:
+                pass
+            self._widget_click_job = None
+
+    def _widget_click(self) -> None:
+        self._widget_click_job = None
+        self._primary()
+
+    def _widget_double_click(self, _e=None):
+        self._cancel_widget_click()
+        self._exit_widget_mode()
+        return "break"
+
+    def _widget_menu_popup(self, e):
+        if self._widget_menu is not None:
+            try:
+                self._widget_menu.tk_popup(e.x_root, e.y_root)
+            finally:
+                self._widget_menu.grab_release()
+        return "break"
+
+    def _toggle_widget_mode(self):
+        if self.widget_mode:
+            self._exit_widget_mode()
+        else:
+            self._enter_widget_mode()
+
+    def _enter_widget_mode(self) -> None:
+        if self.widget_mode:
+            return
+        if self.focus_mode:
+            self._toggle_focus_mode()
+        self.widget_mode = True
+        self._build_widget()
+        self._refresh_widget()
+        self.mini_pill.set_style("toggle_blue")
+        self.root.withdraw()
+        self._widget.lift()
+        try:
+            self._widget.focus_force()
+        except Exception:
+            pass
+
+    def _exit_widget_mode(self) -> None:
+        if not self.widget_mode:
+            return
+        self.widget_mode = False
+        self._cancel_widget_click()
+        if self._widget is not None:
+            try:
+                self._widget.destroy()
+            except Exception:
+                pass
+            self._widget = None
+            self._widget_c = None
+            self._widget_time = None
+            self._widget_fill = None
+            self._widget_menu = None
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except Exception:
+            pass
+        self.mini_pill.set_style("toggle")
+        self._last_render_key = None
+        self.root.after(80, lambda: (self._redo_ring(), self._render_ring(force=True)))
 
     # --------------------------------------------------------------- misc ---
     def _on_goal_change(self):
@@ -1326,6 +1932,8 @@ class FocusForge:
         self._closing = True
         if self.running:
             self.elapsed = self.elapsed_now()
+        if self.break_running:
+            self.break_elapsed = self.break_elapsed_now()
         self._save_stats()
         keep_awake(False)
         try:
@@ -1333,6 +1941,8 @@ class FocusForge:
                 self.root.after_cancel(self._after_job)
             if self._conf_job:
                 self.root.after_cancel(self._conf_job)
+            self._cancel_break_job()
+            self._cancel_widget_click()
         except Exception:
             pass
         try:
