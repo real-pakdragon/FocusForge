@@ -114,11 +114,20 @@ check("completed", a.done)
 check("primary says NEW SESSION",
       a.primary_pill.itemcget(a.primary_pill._txt_item, "text") == "NEW SESSION")
 check("session logged", len(a.data["sessions"]) >= 1)
-check("rest timer queued", a._break_job is not None)
-# the finish firework + confetti always play before the rest timer takes over
-check("firework plays before rest", a.done and not a.break_active)
-a._arm_break_after_celebration()
-check("auto rest starts", wait_for(lambda: a.break_active, 4.0))
+check("no auto rest after session", a._break_job is None and not a.break_active)
+check("stays complete until user acts", a.done and not a.break_active)
+a.stop_alarm()
+pump(0.1)
+check("stop alarm feedback", "ALARM" in a._flash_msg)
+a.reset()
+pump(0.35)
+check("back to ready", not a.done and a.primary_pill.itemcget(
+    a.primary_pill._txt_item, "text") == "START")
+check("ready status returns", wait_for(
+    lambda: a.ring.itemcget(a._ring_status_item, "text") == "R E A D Y", 3.0))
+
+# a manual rest countdown can still be run and returns to ready on its own
+a.start_break()
 pump(0.35)
 check("rest is running", a.break_running and not a.break_done)
 check("rest shows time", a.ring.itemcget(a._ring_time_item, "text").startswith("00:0"),
@@ -133,13 +142,9 @@ check("rest uses break palette", a._last_render_key[1][0] == "break")
 a.skip_break()
 pump(0.35)
 check("rest skipped", not a.break_active and not a.break_done)
-check("back to ready", not a.done and a.primary_pill.itemcget(
+check("back to ready after skip", not a.done and a.primary_pill.itemcget(
     a.primary_pill._txt_item, "text") == "START")
-check("skip message shown", "BREAK" in a._flash_msg)
-check("ready status returns", wait_for(
-    lambda: a.ring.itemcget(a._ring_status_item, "text") == "R E A D Y", 3.0))
 
-# a full rest countdown plays out and returns to ready on its own
 a.start_break()
 a.break_target = 1
 a.break_started_at -= 2.0
@@ -234,15 +239,13 @@ a._toggle_awake()
 check("awake toggled", not a.awake)
 a._toggle_awake()
 
-# finish sounds are synthesised as valid mono 16-bit PCM wav data
-fw = ff.build_firework_wav()
-ch = ff.build_chime_wav()
-for name, data, min_len in (("firework", fw, 150000), ("chime", ch, 80000)):
-    check(f"{name} wav header", data[:4] == b"RIFF" and data[8:12] == b"WAVE"
-          and data[36:40] == b"data", f"{len(data)} bytes")
-    check(f"{name} wav length", len(data) >= min_len, f"{len(data)} bytes")
+# end-of-timer track (mp3) is bundled
 ff.preload_sounds()
-check("sounds preloaded", isinstance(ff._FIREWORK_WAV, bytes) and isinstance(ff._CHIME_WAV, bytes))
+check("end sound path resolved", isinstance(ff._end_sound_path(), str) and len(ff._end_sound_path()) > 0)
+check("end sound file bundled", ff.end_sound_available(), ff._end_sound_path())
+check("end sound skip configured", ff._END_SOUND_SKIP_MS == 0, str(ff._END_SOUND_SKIP_MS))
+# playback helpers must be callable without crashing even when muted
+ff.stop_end_sound()
 
 # the rest palette is visually distinct from the focus palette
 focus_ring = ff.render_ring(320, 0.5, "focus")

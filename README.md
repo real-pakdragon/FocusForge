@@ -1,13 +1,13 @@
-<p align="center">
+﻿<p align="center">
   <a href="https://github.com/real-pakdragon/FocusForge/releases/latest">
-    <img src="docs/banner.png" alt="FocusForge — a deep work timer for Windows" width="100%">
+    <img src="docs/banner.png" alt="FocusForge â€” a deep work timer for Windows" width="100%">
   </a>
 </p>
 
 <h3 align="center">A dark, distraction-free timer for long study challenges.</h3>
 
 <p align="center">
-  From a 25 minute pomodoro to a full 24 hour marathon — pause anytime,<br>
+  From a 25 minute pomodoro to a full 24 hour marathon â€” pause anytime,<br>
   keep your PC awake, and watch your streak grow.
 </p>
 
@@ -19,10 +19,10 @@
 </p>
 
 <p align="center">
-  <a href="#download"><b>Download</b></a> &nbsp;·&nbsp;
-  <a href="#features">Features</a> &nbsp;·&nbsp;
-  <a href="#screenshots">Screenshots</a> &nbsp;·&nbsp;
-  <a href="#build-from-source">Build</a> &nbsp;·&nbsp;
+  <a href="#download"><b>Download</b></a> &nbsp;Â·&nbsp;
+  <a href="#features">Features</a> &nbsp;Â·&nbsp;
+  <a href="#screenshots">Screenshots</a> &nbsp;Â·&nbsp;
+  <a href="#build-from-source">Build</a> &nbsp;Â·&nbsp;
   <a href="#faq">FAQ</a>
 </p>
 
@@ -32,12 +32,12 @@
 
 | | |
 | :--- | :--- |
-| **Installer** &nbsp;·&nbsp; recommended | **Portable** |
-| [**`FocusForge-Setup-1.2.0.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge-Setup-1.2.0.exe) | [**`FocusForge.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge.exe) |
-| 32 MB — installs per-user, **no admin rights**, adds Desktop + Start Menu shortcuts and a real uninstaller. | 30 MB — a single self-contained file. Double-click and go, no installation. |
+| **Installer** &nbsp;Â·&nbsp; recommended | **Portable** |
+| [**`FocusForge-Setup-1.3.0.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge-Setup-1.3.0.exe) | [**`FocusForge.exe`**](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge.exe) |
+| 32 MB â€” installs per-user, **no admin rights**, adds Desktop + Start Menu shortcuts and a real uninstaller. | 30 MB â€” a single self-contained file. Double-click and go, no installation. |
 
 > **Windows SmartScreen:** the builds are not code-signed yet, so Windows may show
-> *"Windows protected your PC"* on first run. Click **More info → Run anyway**.
+> *"Windows protected your PC"* on first run. Click **More info â†’ Run anyway**.
 > You can verify what you downloaded against the SHA-256 checksums in the release notes.
 
 **Requirements:** Windows 10 or 11 (64-bit). No Python, no .NET, no runtime to install.
@@ -46,15 +46,15 @@
 
 | | |
 | :--- | :--- |
-| ⏱️ **Any challenge length** — presets for 25m, 1h, 2h, 4h, 6h, 12h and 24h, plus any custom duration from 1 minute to 168 hours. | ⏸️ **Pause, resume, reset** — one click or the space bar. Elapsed time is preserved exactly, even after hours. |
-| ➕ **+5 minute top-up** — extend a running challenge without losing progress. | 🎯 **Session goal** — type what you're working on and it is shown inside the ring. |
-| 🌀 **Animated progress ring** — anti-aliased gradient ring with a soft glow and rounded end caps. | 📊 **Live stats** — today's focus time, day streak and completed sessions, saved between launches. |
-| 💡 **Keep awake** — stops Windows from sleeping or blanking the screen while the timer runs. | 📌 **Always on top** — keeps the timer above your notes and textbooks. |
-| 🖥️ **Focus mode** — `F11` turns the app into a fullscreen clock with everything else hidden. | 🎆 **Firework finish** — a synthesised launch whistle, boom and crackle plus confetti and a taskbar flash. |
-| ☕ **Take a break anytime** — the **REST** button (or `B`) offers 5, 10 or 15 minutes. Your session clock pauses and picks up exactly where it stopped. | ⏳ **Automatic rest** — when a challenge completes, the full firework and confetti play first, then a mint 5 minute rest ring takes over. |
-| 🪟 **Mini widget** — `F10` shrinks the timer to a small, always-on-top clock you can drag into a corner. | 🖱️ **Stays out of the way** — drag to move it, single-click to pause, double-click for the full window. |
+| â±ï¸ **Any challenge length** â€” presets for 25m, 1h, 2h, 4h, 6h, 12h and 24h, plus any custom duration from 1 minute to 168 hours. | â¸ï¸ **Pause, resume, reset** â€” one click or the space bar. Elapsed time is preserved exactly, even after hours. |
+| âž• **+5 minute top-up** â€” extend a running challenge without losing progress. | ðŸŽ¯ **Session goal** â€” type what you're working on and it is shown inside the ring. |
+| ðŸŒ€ **Animated progress ring** â€” anti-aliased gradient ring with a soft glow and rounded end caps. | ðŸ“Š **Live stats** â€” today's focus time, day streak and completed sessions, saved between launches. |
+| ðŸ’¡ **Keep awake** â€” stops Windows from sleeping or blanking the screen while the timer runs. | ðŸ“Œ **Always on top** â€” keeps the timer above your notes and textbooks. |
+| ðŸ–¥ï¸ **Focus mode** â€” `F11` turns the app into a fullscreen clock with everything else hidden. | ðŸŽ† **Finish cue** â€” confetti, a taskbar flash and your end-of-timer track plays when a timer ends. |
+| â˜• **Take a break anytime** â€” the **REST** button (or `B`) offers 5, 10 or 15 minutes. Your session clock pauses and picks up exactly where it stopped. | ðŸ”• **Stop alarm** â€” press `M` or click **STOP ALARM** to silence the end-of-timer music at any time. |
+| ðŸªŸ **Mini widget** â€” `F10` shrinks the timer to a small, always-on-top clock you can drag into a corner. | ðŸ–±ï¸ **Stays out of the way** â€” drag to move it, single-click to pause, double-click for the full window. |
 
-**Milestone nudges** at 25%, 50%, 75% and 90% give you a quiet chime and a status line —
+**Milestone nudges** at 25%, 50%, 75% and 90% give you a quiet chime and a status line â€”
 enough to notice, not enough to break concentration. During a break press `Space` (or
 the mint **BACK TO WORK** button) to end it early; the session resumes automatically.
 
@@ -65,7 +65,7 @@ the mint **BACK TO WORK** button) to end it early; the session resumes automatic
   &nbsp;
   <img src="docs/screenshot-complete.png" width="268" alt="Completed challenge with firework confetti">
   <br>
-  <em>Mid-challenge &nbsp;·&nbsp; Challenge complete — firework + confetti</em>
+  <em>Mid-challenge &nbsp;Â·&nbsp; Challenge complete â€” firework + confetti</em>
 </p>
 
 <p align="center">
@@ -73,19 +73,19 @@ the mint **BACK TO WORK** button) to end it early; the session resumes automatic
   &nbsp;
   <img src="docs/screenshot-break.png" width="268" alt="Automatic five minute rest after a challenge">
   <br>
-  <em>REST button — 5 / 10 / 15 min, clock paused &nbsp;·&nbsp; Automatic rest after a challenge</em>
+  <em>REST button â€” 5 / 10 / 15 min, clock paused &nbsp;Â·&nbsp; Rest break countdown</em>
 </p>
 
 <p align="center">
   <img src="docs/screenshot-focus.png" width="520" alt="Fullscreen focus mode">
   <br>
-  <em>Focus mode — press F11</em>
+  <em>Focus mode â€” press F11</em>
 </p>
 
 <p align="center">
   <img src="docs/screenshot-widget.png" width="760" alt="Mini widget mode floating above study material">
   <br>
-  <em>Mini widget — F10 shrinks the timer to a corner and keeps it always on top</em>
+  <em>Mini widget â€” F10 shrinks the timer to a corner and keeps it always on top</em>
 </p>
 
 ## Keyboard shortcuts
@@ -96,6 +96,7 @@ the mint **BACK TO WORK** button) to end it early; the session resumes automatic
 | `R` | Reset the timer |
 | `B` | Take a 5 minute break (session pauses) |
 | `Shift` + `B` | Take a 10 minute break |
+| `M` | Stop / silence the alarm sound |
 | `F10` or `W` | Toggle the mini widget |
 | `F11` | Toggle fullscreen focus mode |
 | `Esc` | Leave focus mode or the mini widget |
@@ -104,23 +105,23 @@ the mint **BACK TO WORK** button) to end it early; the session resumes automatic
 
 ### Installer (recommended)
 
-1. Download [`FocusForge-Setup-1.2.0.exe`](https://github.com/real-pakdragon/FocusForge/releases/latest).
-2. Double-click it and follow the wizard — it needs **no administrator rights**.
+1. Download [`FocusForge-Setup-1.3.0.exe`](https://github.com/real-pakdragon/FocusForge/releases/latest).
+2. Double-click it and follow the wizard â€” it needs **no administrator rights**.
 
 It installs to `%LOCALAPPDATA%\Programs\FocusForge`, creates Desktop and Start Menu
-shortcuts, registers FocusForge in **Settings → Apps**, and ships a real uninstaller.
+shortcuts, registers FocusForge in **Settings â†’ Apps**, and ships a real uninstaller.
 A running copy is closed automatically before files are replaced, so upgrades are safe.
 
 Unattended install:
 
 ```powershell
-.\FocusForge-Setup-1.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+.\FocusForge-Setup-1.3.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
 ### Portable
 
 Grab [`FocusForge.exe`](https://github.com/real-pakdragon/FocusForge/releases/latest/download/FocusForge.exe)
-and run it from anywhere — USB stick, OneDrive folder, whatever. Settings live in
+and run it from anywhere â€” USB stick, OneDrive folder, whatever. Settings live in
 `%APPDATA%\FocusForge`, so your stats follow you even if the exe moves.
 
 ## Build from source
@@ -135,7 +136,7 @@ cd FocusForge
 python -m pip install pillow pyinstaller
 winget install --id JRSoftware.InnoSetup --scope user
 
-# runs the smoke test, builds dist\FocusForge.exe and release\FocusForge-Setup-1.2.0.exe
+# runs the smoke test, builds dist\FocusForge.exe and release\FocusForge-Setup-1.3.0.exe
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
@@ -170,12 +171,12 @@ Everything is local and human readable:
 ```
 
 It holds your per-day focus seconds, completed sessions, goal text, last used
-duration and the mini widget position. Delete the file and you start from zero —
+duration and the mini widget position. Delete the file and you start from zero â€”
 nothing leaves your PC.
 
 ## Uninstall
 
-Use **Settings → Apps → FocusForge → Uninstall**, or run:
+Use **Settings â†’ Apps â†’ FocusForge â†’ Uninstall**, or run:
 
 ```powershell
 & "$env:LOCALAPPDATA\Programs\FocusForge\unins000.exe"
@@ -191,7 +192,7 @@ delete that folder by hand for a clean slate.
 No. Both the installer and the app run entirely in your user profile.
 
 **Will Windows go to sleep during a 24 hour challenge?**
-Not while the timer is running and *AWAKE* is on — the app holds
+Not while the timer is running and *AWAKE* is on â€” the app holds
 `SetThreadExecutionState` to keep the system and display awake, and releases it on
 pause or exit. The same applies during the automatic rest timer.
 
@@ -200,14 +201,17 @@ Elapsed time is computed from a monotonic clock, not by counting ticks, so a pau
 a hitch or a slow frame never makes the timer drift.
 
 **What is the rest timer?**
-There are two ways to rest. Press **REST** (or `B` for 5 minutes, `Shift` + `B` for 10)
-at any time: your session clock pauses, a mint ring counts the break down, and when it
-ends the session resumes by itself exactly where it stopped. When a challenge
-completes, the firework and confetti always play in full first, then a 5 minute rest
-starts on its own. Press `Space` or **BACK TO WORK** to end any break early.
+Press **REST** (or `B` for 5 minutes, `Shift` + `B` for 10) whenever you want a break:
+your session clock pauses, a mint ring counts the break down, and when it ends the
+session resumes by itself exactly where it stopped. A finished challenge stays on the
+completion screen (it does not start a rest automatically) â€” use **REST** if you want
+one. Press `Space` or **BACK TO WORK** to end any break early.
+
+**How do I stop the alarm sound?**
+Click the **STOP ALARM** button (bottom right) or press `M` to silence the end-of-timer music.
 
 **Can I keep the timer small while I study?**
-Yes — press `F10` (or click **MINI**) to turn the whole app into a 196×66 widget that
+Yes â€” press `F10` (or click **MINI**) to turn the whole app into a 196Ã—66 widget that
 shows only the remaining time and a slim progress line. It is always on top, so drag
 it into a screen corner and leave it there. Single-click it to start/pause,
 double-click to get the full window back; its position is remembered between launches.
@@ -224,44 +228,43 @@ keep-awake. The timer logic itself is pure Python.
 
 ```text
 FocusForge/
-├── src/app.py                  # the whole application (tkinter + Pillow)
-├── installer.iss               # Inno Setup script -> release\FocusForge-Setup-*.exe
-├── assets/                     # icon, logo, version resource, wizard artwork
-├── tools/
-│   ├── make_icon.py            # icon + logo
-│   ├── make_banner.py          # README hero banner
-│   ├── make_screenshots.py     # docs screenshots from the real UI
-│   └── make_installer_art.py   # Inno Setup wizard bitmaps
-├── tests/smoke_test.py         # UI + state machine smoke test
-├── build.ps1                   # test, package the exe, compile the installer
-├── install.ps1                 # script based per-user install (portable builds)
-└── publish.ps1                 # create the GitHub repo and push
+â”œâ”€â”€ src/app.py                  # the whole application (tkinter + Pillow)
+â”œâ”€â”€ installer.iss               # Inno Setup script -> release\FocusForge-Setup-*.exe
+â”œâ”€â”€ assets/                     # icon, logo, version resource, wizard artwork
+â”œâ”€â”€ tools/
+â”‚   â”œâ”€â”€ make_icon.py            # icon + logo
+â”‚   â”œâ”€â”€ make_banner.py          # README hero banner
+â”‚   â”œâ”€â”€ make_screenshots.py     # docs screenshots from the real UI
+â”‚   â””â”€â”€ make_installer_art.py   # Inno Setup wizard bitmaps
+â”œâ”€â”€ tests/smoke_test.py         # UI + state machine smoke test
+â”œâ”€â”€ build.ps1                   # test, package the exe, compile the installer
+â”œâ”€â”€ install.ps1                 # script based per-user install (portable builds)
+â””â”€â”€ publish.ps1                 # create the GitHub repo and push
 ```
 
 Build outputs:
 
 ```text
 dist\FocusForge.exe                 portable single file   (~30 MB)
-release\FocusForge-Setup-1.2.0.exe  installer for any PC   (~32 MB)
+release\FocusForge-Setup-1.3.0.exe  installer for any PC   (~32 MB)
 ```
 
 ## Tech notes
 
-The interface is drawn with `tkinter` canvases and custom Pillow-rendered images —
-rounded panels, buttons and a gradient progress ring with a glow — so there are no
+The interface is drawn with `tkinter` canvases and custom Pillow-rendered images â€”
+rounded panels, buttons and a gradient progress ring with a glow â€” so there are no
 third-party UI frameworks and the executable stays small. Bitmaps and gradients are
 cached per size, which keeps the once-a-second ring refresh in the low tens of
 milliseconds even at fullscreen sizes.
 
-The finish sound is not a bundled audio file: `build_firework_wav()` synthesises a
-rising launch whistle, a low boom, crackling sparks and a sparkle tail into an
-in-memory PCM buffer, then plays it through `winsound` with `SND_MEMORY`. The rest
-timer uses the same technique for its closing chime, and both buffers are rendered
-once in a background thread so the first completion never stutters.
+At the end of a session and at the end of a rest, FocusForge plays the bundled
+`assets/end_theme.mp3` track via Windows MCI (`winmm`), so
+it works without extra dependencies. The previous end sound is stopped when you
+start, reset or skip, and the timer stays muted in demo/test runs.
 
 ## License
 
-[MIT](LICENSE) — free to use, modify and share.
+[MIT](LICENSE) â€” free to use, modify and share.
 
 ---
 

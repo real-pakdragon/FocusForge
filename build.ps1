@@ -20,7 +20,7 @@ python -m PyInstaller `
     --windowed `
     --name FocusForge `
     --icon assets\icon.ico `
-    --add-data "assets\icon.ico;assets" `
+    --add-data "assets;assets" `
     --version-file assets\version_info.txt `
     src\app.py
 

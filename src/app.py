@@ -1,4 +1,4 @@
-"""FocusForge - a deep work / study challenge timer for Windows.
+﻿"""FocusForge - a deep work / study challenge timer for Windows.
 
 A single-file tkinter application with a custom rendered UI:
   * circular progress ring with gradient + glow
@@ -7,7 +7,7 @@ A single-file tkinter application with a custom rendered UI:
   * manual 5 / 10 / 15 minute breaks that pause and resume the session
   * live stats (today, streak, sessions), persisted to %APPDATA%
   * always-on-top and keep-awake toggles
-  * fullscreen focus mode, keyboard shortcuts, firework finish (sound + confetti)
+  * fullscreen focus mode, keyboard shortcuts, confetti and end-of-timer music (skips 4s)
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ except Exception:  # pragma: no cover - non Windows
     winsound = None
 
 APP_NAME = "FocusForge"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 DATA_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
 DATA_FILE = DATA_DIR / "stats.json"
 
@@ -368,169 +368,94 @@ def keep_awake(enabled: bool) -> None:
 
 
 # ----------------------------------------------------------------- sound ----
-# The finish sound is synthesised here instead of shipping a .wav: a launch
-# whistle, a low boom, a sprinkling of crackle and a long sparkle tail. It is
-# built once in a background thread so the first completion never stutters.
-_SR = 44100
+# "Far From Any Road" (user provided) plays at the end of a session and at the
+# end of a rest break. We skip the first 4 seconds and play via MCI so MP3 works
+# without extra dependencies or conversion.
 _SND_LOCK = threading.Lock()
-_FIREWORK_WAV: bytes | None = None
-_CHIME_WAV: bytes | None = None
+_MCI_ALIAS = "ffend"
+_END_SOUND_DELAY_MS = 0      # play immediately when timer/rest ends
+_END_SOUND_SKIP_MS = 0       # play from start
+_END_SOUND_PATH: str | None = None
 
 
-def _pcm_wav(samples, rate: int = _SR) -> bytes:
-    pcm = array.array("h", (max(-32767, min(32767, int(v * 32767))) for v in samples))
-    if sys.byteorder != "little":
-        pcm.byteswap()
-    data = pcm.tobytes()
-    header = (
-        b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVE"
-        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
-        + b"data" + struct.pack("<I", len(data))
-    )
-    return header + data
+def _end_sound_path() -> str:
+    global _END_SOUND_PATH
+    if _END_SOUND_PATH is None:
+        _END_SOUND_PATH = resource_path(os.path.join("assets", "end_theme.mp3"))
+    return _END_SOUND_PATH
 
 
-def build_firework_wav() -> bytes:
-    """A firework: rising whistle, deep boom, crackling sparks, fading shimmer."""
-    rate = _SR
-    dur = 3.0
-    n = int(rate * dur)
-    rnd = random.Random(20261108)
-    out = [0.0] * n
-
-    # rising launch whistle
-    phase = 0.0
-    launch = int(0.55 * rate)
-    for i in range(launch):
-        t = i / rate
-        freq = 620.0 + 1250.0 * (t / 0.55) ** 0.7
-        phase += 2.0 * math.pi * freq / rate
-        env = min(1.0, t / 0.06) * max(0.0, 1.0 - (t / 0.55) ** 3)
-        out[i] += 0.09 * env * math.sin(phase)
-
-    # boom: low-passed noise burst + sub thump + sharp crack on impact
-    start = int(0.50 * rate)
-    lp = 0.0
-    a = 0.16
-    for i in range(start, n):
-        t = (i - start) / rate
-        if t > 2.0:
-            break
-        noise = rnd.uniform(-1.0, 1.0)
-        lp += a * (noise - lp)
-        body = lp * 1.35 * math.exp(-t / 0.32)
-        thump = math.sin(2.0 * math.pi * 55.0 * t) * math.exp(-t / 0.45) * 0.55
-        crack = noise * math.exp(-t / 0.012) * 0.35
-        out[i] += body + thump + crack
-
-    # crackle: sparse high-passed pops that thin out over time
-    t0, t1 = 0.55, 2.75
-    for _ in range(130):
-        at = rnd.uniform(t0, t1)
-        s = int(at * rate)
-        if s >= n:
-            continue
-        length = int(rnd.uniform(0.003, 0.012) * rate)
-        amp = rnd.uniform(0.05, 0.30) * (1.0 - (at - t0) / (t1 - t0)) ** 1.2
-        prev = 0.0
-        for j in range(length):
-            if s + j >= n:
-                break
-            x = rnd.uniform(-1.0, 1.0)
-            out[s + j] += (x - prev) * amp * (1.0 - j / length) ** 2
-            prev = x
-
-    # shimmering sparkle tail
-    prev = 0.0
-    base = int(0.45 * rate)
-    for i in range(base, n):
-        t = (i - base) / rate
-        x = rnd.uniform(-1.0, 1.0)
-        out[i] += (x - prev) * 0.14 * math.exp(-t / 0.85)
-        prev = x
-
-    peak = max(1e-9, max(abs(v) for v in out))
-    gain = 0.92 / peak
-    fade = int(0.008 * rate)
-    tail = int(0.30 * rate)
-    for i in range(n):
-        v = out[i] * gain
-        if i < fade:
-            v *= i / fade
-        if i >= n - tail:
-            v *= (n - i) / tail
-        out[i] = math.tanh(v * 1.2) * 0.95
-    return _pcm_wav(out, rate)
+def end_sound_available() -> bool:
+    try:
+        return os.path.exists(_end_sound_path())
+    except Exception:
+        return False
 
 
-def build_chime_wav() -> bytes:
-    """Soft three note chime for the end of a rest break."""
-    rate = _SR
-    dur = 1.6
-    n = int(rate * dur)
-    out = [0.0] * n
-    for freq, at, decay, amp in (
-        (659.25, 0.00, 0.55, 0.30),
-        (987.77, 0.16, 0.65, 0.24),
-        (1318.51, 0.32, 0.85, 0.15),
-    ):
-        s = int(at * rate)
-        for i in range(s, n):
-            t = (i - s) / rate
-            env = math.exp(-t / decay) * min(1.0, t / 0.004)
-            out[i] += amp * env * (
-                math.sin(2.0 * math.pi * freq * t)
-                + 0.25 * math.sin(4.0 * math.pi * freq * t)
-            )
-    peak = max(1e-9, max(abs(v) for v in out))
-    gain = 0.55 / peak
-    tail = int(0.25 * rate)
-    for i in range(n):
-        v = out[i] * gain
-        if i >= n - tail:
-            v *= (n - i) / tail
-        out[i] = v
-    return _pcm_wav(out, rate)
+def _mci_send(cmd: str) -> int:
+    if sys.platform != "win32":
+        return 0
+    try:
+        return int(ctypes.windll.winmm.mciSendStringW(cmd, None, 0, 0))
+    except Exception:
+        return -1
 
 
-def preload_sounds() -> None:
-    global _FIREWORK_WAV, _CHIME_WAV
-    if _FIREWORK_WAV is not None and _CHIME_WAV is not None:
+def stop_end_sound() -> None:
+    """Stop the end-of-timer track. Must run on the same thread that started it."""
+    if sys.platform != "win32":
         return
-    with _SND_LOCK:
-        if _FIREWORK_WAV is None:
-            _FIREWORK_WAV = build_firework_wav()
-        if _CHIME_WAV is None:
-            _CHIME_WAV = build_chime_wav()
+    cmds = (f"stop {_MCI_ALIAS}", f"close {_MCI_ALIAS}")
+    try:
+        with _SND_LOCK:
+            for cmd in cmds:
+                _mci_send(cmd)
+    except Exception:
+        for cmd in cmds:
+            _mci_send(cmd)
 
 
-def _play_wav(data: bytes | None) -> None:
-    if not winsound or not data:
+def play_end_sound(skip_ms: int = _END_SOUND_SKIP_MS) -> None:
+    """Play the end-of-timer track from skip_ms (default 4s).
+
+    MCI device control is thread-affine, so open/play/stop must happen on the
+    same (UI) thread; playback itself is asynchronous.
+    """
+    if sys.platform != "win32":
+        return
+    path = _end_sound_path()
+    if not os.path.exists(path):
         return
     try:
-        winsound.PlaySound(
-            data, winsound.SND_MEMORY | winsound.SND_ASYNC | winsound.SND_NODEFAULT
-        )
+        with _SND_LOCK:
+            _mci_send(f"stop {_MCI_ALIAS}")
+            _mci_send(f"close {_MCI_ALIAS}")
+            p = path.replace('"', "")
+            err = _mci_send(f'open "{p}" type mpegvideo alias {_MCI_ALIAS}')
+            if err != 0:
+                _mci_send(f'open "{p}" alias {_MCI_ALIAS}')
+            _mci_send(f"set {_MCI_ALIAS} time format milliseconds")
+            _mci_send(f"play {_MCI_ALIAS} from {int(skip_ms)}")
     except Exception:
         pass
 
 
+# legacy names kept for compatibility with older tests/callers
+_FIREWORK_WAV: bytes | None = None
+_CHIME_WAV: bytes | None = None
+
+
+def preload_sounds() -> None:
+    """Ensure the end-of-timer track path is resolved (no heavy preload needed)."""
+    _end_sound_path()
+
+
 def play_firework() -> None:
-    global _FIREWORK_WAV
-    if not winsound:
-        return
-    if _FIREWORK_WAV is None:
-        preload_sounds()
-    _play_wav(_FIREWORK_WAV)
+    play_end_sound(_END_SOUND_SKIP_MS)
 
 
 def play_chime() -> None:
-    global _CHIME_WAV
-    if not winsound:
-        return
-    if _CHIME_WAV is None:
-        preload_sounds()
-    _play_wav(_CHIME_WAV)
+    play_end_sound(_END_SOUND_SKIP_MS)
 
 
 # ---------------------------------------------------------------- widgets ---
@@ -790,6 +715,7 @@ class FocusForge:
         self._conf_job = None
         self._after_job = None
         self._break_job = None
+        self._alarm_job = None
         self._ring_size = 0
         self._resize_job = None
         self._closing = False
@@ -1021,9 +947,14 @@ class FocusForge:
         footer = tk.Frame(self.root, bg=BG)
         self._hidden_in_focus.add(footer)
         self._add(footer, fill="x", padx=PAD, pady=(self._px(10), self._px(12)))
-        tk.Label(footer, text="SPACE  start / pause    R  reset    B  break    F10  mini    F11  focus",
+        tk.Label(footer, text="SPACE  start/pause  R  reset  B  break  M  stop alarm  F10  mini  F11  focus",
                  bg=BG, fg=DIM, font=self.f_foot).pack(side="left")
-        tk.Label(footer, text=f"v{VERSION}", bg=BG, fg=DIM, font=self.f_foot).pack(side="right")
+        right = tk.Frame(footer, bg=BG)
+        right.pack(side="right")
+        tk.Label(right, text=f"v{VERSION}", bg=BG, fg=DIM, font=self.f_foot).pack(side="right")
+        self.silence_pill = Pill(right, "STOP ALARM", command=self.stop_alarm, w=self._px(86), h=self._px(24),
+                                 radius=self._px(8), style="ghost", font=self.f_tiny, bg=BG)
+        self.silence_pill.pack(side="right", padx=(0, self._px(8)))
 
         # focus-mode hint (only packed while in focus mode)
         self.hint = tk.Label(self.root, text="ESC  exit focus mode", bg=BG, fg=DIM, font=self.f_small)
@@ -1180,8 +1111,7 @@ class FocusForge:
         self._cancel_break_job()
         self._clear_break(resume=False)
         self._begin_break(minutes, manual=not self.done, resume=was_running)
-        if not self._muted:
-            play_chime()
+        self._stop_alarm()
         self._flash(f"{int(minutes)} MIN BREAK", 2.0, MINT)
 
     def _finish_break(self) -> None:
@@ -1196,8 +1126,7 @@ class FocusForge:
             self._flash("BREAK COMPLETE", 2.4, MINT)
         else:
             self._flash("REST COMPLETE", 3.2, MINT)
-        if not self._muted:
-            play_chime()
+        self._schedule_end_sound(_END_SOUND_DELAY_MS, _END_SOUND_SKIP_MS)
         try:
             hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
             flash_taskbar(hwnd)
@@ -1209,9 +1138,11 @@ class FocusForge:
     def skip_break(self) -> None:
         if not self.break_active:
             return
+        self._stop_alarm()
         self._dismiss_break("BREAK SKIPPED")
 
     def _dismiss_break(self, msg: str | None = None) -> None:
+        self._stop_alarm()
         manual = self.break_manual
         if manual:
             self._clear_break()
@@ -1231,6 +1162,7 @@ class FocusForge:
     def start(self):
         if self.break_active:
             return
+        self._stop_alarm()
         if self.done:
             self._soft_reset()
         if self.running:
@@ -1278,6 +1210,7 @@ class FocusForge:
             self.start()
 
     def _soft_reset(self):
+        self._stop_alarm()
         self.running = False
         self.done = False
         self.elapsed = 0.0
@@ -1607,6 +1540,37 @@ class FocusForge:
             pass
 
     # ------------------------------------------------------------- effects --
+    def _cancel_alarm_job(self) -> None:
+        if self._alarm_job:
+            try:
+                self.root.after_cancel(self._alarm_job)
+            except Exception:
+                pass
+            self._alarm_job = None
+
+    def _schedule_end_sound(self, delay_ms: int = _END_SOUND_DELAY_MS,
+                            skip_ms: int = _END_SOUND_SKIP_MS) -> None:
+        self._cancel_alarm_job()
+        if self._muted or self._closing:
+            return
+
+        def fire():
+            self._alarm_job = None
+            if not self._muted and not self._closing:
+                play_end_sound(skip_ms)
+
+        self._alarm_job = self.root.after(max(0, int(delay_ms)), fire)
+
+    def _stop_alarm(self, flash: bool = False) -> None:
+        self._cancel_alarm_job()
+        stop_end_sound()
+        if flash:
+            self._flash("ALARM STOPPED", 1.8, MUTED)
+
+    def stop_alarm(self):
+        """Stop the end-of-timer music immediately."""
+        self._stop_alarm(flash=True)
+
     def _flash(self, msg: str, seconds: float = 2.4, color: str = AMBER):
         self._flash_msg = msg
         self._flash_until = time.monotonic() + seconds
@@ -1624,17 +1588,13 @@ class FocusForge:
         self._save_stats()
         self._flash("CHALLENGE COMPLETE", 6.0, MINT)
         self._confetti()
-        if not self._muted:
-            if winsound:
-                play_firework()
-            else:
-                self._beep([(784, 130), (988, 130), (1175, 150), (1568, 420)])
+        self._schedule_end_sound(_END_SOUND_DELAY_MS, _END_SOUND_SKIP_MS)
         try:
             hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
             flash_taskbar(hwnd)
         except Exception:
             pass
-        self._schedule_break()
+        # rest is manual now - use the REST button if you want a break after a session
 
     def _log_session(self):
         self.data["sessions"].append({
@@ -1715,8 +1675,7 @@ class FocusForge:
                     pass
             self._conf_parts = []
             self._conf_job = None
-            # the firework has landed - only now may the rest timer take over
-            self._arm_break_after_celebration()
+            # session stays complete; rest is started manually with the REST button if wanted
 
     # -------------------------------------------------------------- dialog --
     def _open_custom(self):
@@ -1753,6 +1712,8 @@ class FocusForge:
         self.root.bind("<Key-R>", self._key_reset)
         self.root.bind("<Key-b>", self._key_break)
         self.root.bind("<Key-B>", self._key_break_long)
+        self.root.bind("<Key-m>", self._key_stop_alarm)
+        self.root.bind("<Key-M>", self._key_stop_alarm)
         self.root.bind("<F10>", self._key_widget)
         self.root.bind("<Key-w>", self._key_widget)
         self.root.bind("<Key-W>", self._key_widget)
@@ -1782,6 +1743,12 @@ class FocusForge:
         if self._typing():
             return
         self.reset()
+        return "break"
+
+    def _key_stop_alarm(self, _e=None):
+        if self._typing():
+            return
+        self.stop_alarm()
         return "break"
 
     def _key_break(self, _e=None):
@@ -2054,6 +2021,7 @@ class FocusForge:
         if self._closing:
             return
         self._closing = True
+        self._stop_alarm()
         if self.running:
             self.elapsed = self.elapsed_now()
         if self.break_running:

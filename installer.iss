@@ -1,9 +1,9 @@
-; FocusForge installer - Inno Setup 6
+﻿; FocusForge installer - Inno Setup 6
 ; Build with:  ISCC.exe installer.iss
 ; Produces a per-user installer that needs no administrator rights.
 
 #define MyAppName "FocusForge"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "FocusForge"
 #define MyAppExeName "FocusForge.exe"
 #define MyAppId "{{8D3C1B52-5A47-4F0E-9C6D-2E7A1B9F4C31}"
